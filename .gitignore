@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+
+# Data (keep placeholders)
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+*.csv
+*.parquet
+
+# Secrets
+*.key
+*.pem
+salt.local
+.hsm/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
