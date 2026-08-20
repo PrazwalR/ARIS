@@ -1,0 +1,26 @@
+-e .
+
+# Phase 0–1 core
+numpy>=1.26
+pandas>=2.2
+scikit-learn>=1.4
+torch>=2.2
+flwr>=1.9
+pydantic>=2.7
+
+# API / BankBot
+fastapi>=0.111
+uvicorn[standard]>=0.30
+
+# Risk bus (in-process first; Kafka in M3)
+# kafka-python>=2.0
+
+# Privacy (M2)
+# opacus>=1.4
+
+# Explainability (M5)
+# shap>=0.45
+# lime>=0.2
+
+pytest>=8.2
+httpx>=0.27
