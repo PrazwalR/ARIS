@@ -22,9 +22,9 @@ Each phase has a **goal**, **deliverables**, and a **done when** check. We imple
 
 ---
 
-## M1 — Federated learning (3–5 banks)
+## M1 — Federated learning (3–5 banks) (**completed**)
 
-**Lead:** AI-1. **Support:** AI-2 (baseline + metrics), Backend (data scripts / bank IDs).
+**Lead:** AI-1. **Support:** AI-2 (baseline + metrics), Backend (data scripts / bank IDs). **Next:** M2 (AI-1 lead).
 
 **Goal:** Simulated banks keep local shards; Flower aggregates a global fraud model (FedAvg). Compare local-only vs federated.
 
@@ -124,4 +124,4 @@ Each phase has a **goal**, **deliverables**, and a **done when** check. We imple
 
 ## Suggested next session
 
-**M0 is done.** Start **M1**: AI-1 Flower clients on ULB shards; AI-2 baseline + metrics template; Backend dataset/config only. When a phase closes, append what shipped to the Phase log in `README.md`.
+**M0 and M1 are done.** Start **M2**: AI-1 DP-SGD / Flower DP; AI-2 utility (recall at FPR); Backend logging rules for updates. When a phase closes, append what shipped to the Phase log in `README.md`.

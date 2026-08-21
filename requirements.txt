@@ -4,9 +4,11 @@
 numpy>=1.26
 pandas>=2.2
 scikit-learn>=1.4
-torch>=2.2
 flwr>=1.9
 pydantic>=2.7
+
+# Optional (M1 uses NumPy MLP; PyTorch is not required)
+# torch>=2.2
 
 # API / BankBot
 fastapi>=0.111

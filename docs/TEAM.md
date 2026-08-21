@@ -32,15 +32,11 @@ Already in repo: hashing, in-memory bus, policy, BankBot demo, Anu story.
 
 ---
 
-### M1 Federated learning
+### M1 Federated learning — **done**
 
-| Person | Tasks |
-| --- | --- |
-| **AI-1 (lead)** | Flower server + 3–5 clients; ULB shards (non-IID); FedAvg; compare local vs global AUC / PR-AUC |
-| **AI-2** | Feature columns, train/val split rules, baseline sklearn model for “local bank”; metric report template |
-| **Backend** | Dataset download script + `data/` ignore rules; config for bank IDs (`BANK-A` …); no Kafka yet |
+Shipped: Flower `NumPyClient` per bank, Flower FedAvg aggregator, ULB + synthetic (+ PaySim/IEEE-CIS loaders), local vs global metrics, `FraudScorer.score_row`.
 
-**Handoff:** AI-1 stores a scored CSV or function `score_receiver(features) -> {score, confidence}` that AI-2 and Backend can call in M3/M4.
+**Handoff:** `src/aris/fl/scorer.py` → `{risk_score, confidence, probability, model_version}` (no raw account). Checkpoint: `data/processed/m1_global_<dataset>.npz`.
 
 ---
 
