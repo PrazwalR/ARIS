@@ -101,13 +101,13 @@ def run_experiment(
         "rounds": cfg.rounds,
         "n_features": int(clients[0].x.shape[1]),
         "n_train": int(sum(len(c.y) for c in clients)),
-        "n_holdout": int(len(y_te)),
+        "n_holdout": len(y_te),
         "holdout_positives": int(y_te.sum()),
         "checkpoint": str(ckpt),
         "banks": [
             {
                 "bank_id": clients[i].bank_id,
-                "n": int(len(clients[i].y)),
+                "n": len(clients[i].y),
                 "positives": int(clients[i].y.sum()),
                 "local": local_metrics[i],
             }
@@ -137,7 +137,7 @@ def _train_local_baselines(
     y_te: np.ndarray,
     cfg: TrainConfig,
 ) -> list[dict[str, float]]:
-    """Same local steps as FL (epochs × rounds) so the comparison is fair."""
+    """Same local steps as FL (epochs x rounds) so the comparison is fair."""
     rows = []
     total_epochs = cfg.local_epochs * cfg.rounds
     for i, client in enumerate(clients):
@@ -185,13 +185,28 @@ def write_report(report: dict, path: Path) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="ARIS M1 federated vs local fraud models")
-    parser.add_argument("--dataset", default="synthetic", choices=("synthetic", "ulb", "paysim", "ieee-cis"))
+    parser.add_argument(
+        "--dataset",
+        default="synthetic",
+        choices=("synthetic", "ulb", "paysim", "ieee-cis"),
+    )
     parser.add_argument("--banks", type=int, default=5)
     parser.add_argument("--rounds", type=int, default=8)
     parser.add_argument("--epochs", type=int, default=4)
-    parser.add_argument("--partition", default="auto", choices=("auto", "temporal", "dirichlet"))
-    parser.add_argument("--max-rows", type=int, default=None, help="Cap rows (ULB laptop runs: 40000)")
-    parser.add_argument("--out", default=None, help="JSON report path (default data/processed/m1_metrics_<dataset>.json)")
+    parser.add_argument(
+        "--partition", default="auto", choices=("auto", "temporal", "dirichlet")
+    )
+    parser.add_argument(
+        "--max-rows",
+        type=int,
+        default=None,
+        help="Cap rows (ULB laptop runs: 40000)",
+    )
+    parser.add_argument(
+        "--out",
+        default=None,
+        help="JSON report path (default m1_metrics_<dataset>.json in data/processed)",
+    )
     args = parser.parse_args(argv)
 
     cfg = TrainConfig(

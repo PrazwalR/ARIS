@@ -8,8 +8,8 @@ import numpy as np
 class FraudMLP:
     def __init__(self, n_features: int, hidden: int = 16, seed: int = 42) -> None:
         rng = np.random.default_rng(seed)
-        # He-style scale
-        self.w1 = rng.normal(0, np.sqrt(2 / n_features), size=(n_features, hidden)).astype(np.float32)
+        scale = np.sqrt(2 / n_features)
+        self.w1 = rng.normal(0, scale, size=(n_features, hidden)).astype(np.float32)
         self.b1 = np.zeros(hidden, dtype=np.float32)
         self.w2 = rng.normal(0, np.sqrt(2 / hidden), size=(hidden, 1)).astype(np.float32)
         self.b2 = np.zeros(1, dtype=np.float32)

@@ -98,7 +98,7 @@ def pooled_holdout_from_shards(
     hx, hy = [], []
     for x, y in shards:
         n = len(y)
-        n_te = max(1, int(round(n * frac)))
+        n_te = max(1, round(n * frac))
         idx = rng.permutation(n)
         te, tr = idx[:n_te], idx[n_te:]
         kept.append((x[tr], y[tr]))

@@ -20,7 +20,7 @@ def classification_metrics(y_true: np.ndarray, scores: np.ndarray) -> dict[str, 
             "recall_at_fpr_0_05": float("nan"),
             "fpr_at_recall_0_50": float("nan"),
             "positives": int(y_true.sum()),
-            "n": int(len(y_true)),
+            "n": len(y_true),
         }
 
     auc = float(roc_auc_score(y_true, scores))
@@ -29,7 +29,7 @@ def classification_metrics(y_true: np.ndarray, scores: np.ndarray) -> dict[str, 
     fpr, tpr, _ = roc_curve(y_true, scores)
     recall_at_fpr = _best_tpr_at_fpr(fpr, tpr, max_fpr=0.05)
 
-    prec, rec, _ = precision_recall_curve(y_true, scores)
+    _, _, _ = precision_recall_curve(y_true, scores)
     fpr_at_recall = _fpr_at_recall(y_true, scores, target_recall=0.5)
 
     return {
@@ -38,7 +38,7 @@ def classification_metrics(y_true: np.ndarray, scores: np.ndarray) -> dict[str, 
         "recall_at_fpr_0_05": float(recall_at_fpr),
         "fpr_at_recall_0_50": float(fpr_at_recall),
         "positives": int(y_true.sum()),
-        "n": int(len(y_true)),
+        "n": len(y_true),
     }
 
 

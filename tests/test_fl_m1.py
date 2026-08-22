@@ -19,7 +19,8 @@ def test_client_fit_returns_weights_not_rows():
     x = rng.normal(size=(40, 6)).astype(np.float32)
     y = rng.integers(0, 2, size=40)
     client = BankFlowerClient("BANK-A", x, y, hidden=8, seed=0)
-    weights, n, metrics = client.fit(client.get_parameters({}), {"local_epochs": 1, "batch_size": 16})
+    config = {"local_epochs": 1, "batch_size": 16}
+    weights, n, metrics = client.fit(client.get_parameters({}), config)
     assert n == 40
     assert isinstance(weights, list)
     assert weights[0].shape[0] != 40 or weights[0].ndim == 2  # layer matrix, not 40 rows of data

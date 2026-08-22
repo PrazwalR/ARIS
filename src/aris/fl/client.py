@@ -24,7 +24,7 @@ class BankFlowerClient(NumPyClient):
         self.seed = seed
         self.model = new_model(x.shape[1], hidden=hidden, seed=seed)
 
-    def get_parameters(self, config: dict) -> list[np.ndarray]:
+    def get_parameters(self, _config: dict) -> list[np.ndarray]:
         return get_weights(self.model)
 
     def fit(self, parameters: list[np.ndarray], config: dict) -> tuple[list[np.ndarray], int, dict]:
@@ -39,8 +39,8 @@ class BankFlowerClient(NumPyClient):
             seed=self.seed + int(config.get("server_round", 0)),
         )
         metrics["bank_id"] = self.bank_id
-        return get_weights(self.model), int(len(self.y)), metrics
+        return get_weights(self.model), len(self.y), metrics
 
-    def evaluate(self, parameters: list[np.ndarray], config: dict) -> tuple[float, int, dict]:
+    def evaluate(self, parameters: list[np.ndarray], _config: dict) -> tuple[float, int, dict]:
         set_weights(self.model, parameters)
-        return 0.0, int(len(self.y)), {"bank_id": self.bank_id}
+        return 0.0, len(self.y), {"bank_id": self.bank_id}

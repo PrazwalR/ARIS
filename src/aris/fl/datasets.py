@@ -1,4 +1,4 @@
-"""Load ULB, PaySim, IEEE-CIS, or a synthetic non-IID fraud set. No rows leave this module to the bus."""
+"""Load ULB, PaySim, IEEE-CIS, or synthetic non-IID fraud set. No rows leave this module."""
 
 from __future__ import annotations
 
@@ -71,7 +71,7 @@ def load_ulb(max_rows: int | None = None, path: Path | None = None) -> TabularFr
     vcols = [c for c in df.columns if c.startswith("V")]
     x = np.column_stack([df[vcols].to_numpy(dtype=np.float32), amount])
     y = df["Class"].to_numpy(dtype=np.int64)
-    return TabularFraud("ulb", x, y, time, vcols + ["log_amount"])
+    return TabularFraud("ulb", x, y, time, [*vcols, "log_amount"])
 
 
 def load_paysim(max_rows: int | None = None) -> TabularFraud:

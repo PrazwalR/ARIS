@@ -54,7 +54,8 @@ class FraudScorer:
 def save_weights(path: Path | str, weights: list[np.ndarray], meta: dict) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    np.savez(path, **{f"w{i}": w for i, w in enumerate(weights)}, meta=np.array([meta], dtype=object))
+    weight_dict = {f"w{i}": w for i, w in enumerate(weights)}
+    np.savez(path, meta=np.array([meta], dtype=object), **weight_dict)
 
 
 def load_weights(path: Path | str) -> tuple[list[np.ndarray], dict]:
