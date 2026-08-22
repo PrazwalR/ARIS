@@ -16,8 +16,10 @@ data/raw/*
 !data/raw/.gitkeep
 data/processed/*
 !data/processed/.gitkeep
-*.csv
-*.parquet
+# Scoped to data/ deliberately: a blanket *.csv would also drop small test
+# fixtures that M1 will need to commit.
+data/**/*.csv
+data/**/*.parquet
 
 # Secrets
 *.key

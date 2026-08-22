@@ -6,6 +6,13 @@ Digital banking has made transactions faster and easier, but it has also increas
 
 ARIS (AI-Agent Risk Integration System) is a banking-security project that solves this problem. It enables multiple banks to collaboratively train a fraud-detection model using federated learning without sharing raw transaction data. When the model identifies a risky receiver account, it sends only a risk score (not raw data) to a Shared Risk-Signal Bus. An AI banking assistant (BankBot) checks this bus before executing transactions. If the risk score is high, BankBot pauses or blocks the transfer, protecting users from potential fraud—even if the fraud was first detected in a different bank.
 
+**Implementation status.** This document describes the full ARIS design. What is
+built today is the risk-signal layer: pseudonymous IDs, signed publication, the
+bus, the policy engine, and BankBot's pre-transaction check (M0). The federated
+learning layer of §3.1 is **design only — no training code exists yet** and is
+scheduled as M1 in [PHASES.md](PHASES.md). Sections below flag this where it
+applies.
+
 ## 2. Problem Statement
 
 - Fraudsters use the same receiver accounts across multiple banks.
@@ -24,6 +31,9 @@ ARIS (AI-Agent Risk Integration System) is a banking-security project that solve
 ARIS has three core layers.
 
 ### 3.1 Federated Learning Layer (Model Training)
+
+> **Status: design only.** No federated learning code exists in this repository
+> yet; `src/aris/fl/` is an empty package. Scheduled as M1.
 
 Each bank keeps its raw transaction data on-prem. A central FL server coordinates training of a global fraud model.
 
@@ -45,33 +55,68 @@ To protect privacy, the bus does not store plain account numbers. Instead it use
 
 All banks agree on:
 
-- Hash function: `H = SHA-256`
-- Shared secret salt: `SALT` (stored securely in each bank’s HSM/KMS)
+- MAC: `HMAC-SHA256` (RFC 2104)
+- A shared **consortium key**: 32 bytes of random material, hex- or base64-encoded.
+  The design target is HSM/KMS residency; the current implementation reads it from
+  the `ARIS_SALT` environment variable (see [SECURITY.md](SECURITY.md) §3.6).
+- A **normalization rule**, which is load-bearing: whitespace is stripped, non-ASCII
+  is rejected *before* case folding, and the result is uppercased and restricted to
+  `[A-Z0-9-]{4,34}`. Two implementations that normalize differently produce different
+  IDs, and cross-bank matching then fails silently.
 
 For any account `ACC`:
 
-`risk_id = SHA256(ACC ∥ SALT)`
+`risk_id = HMAC-SHA256(consortium_key, normalize(ACC))`
 
-All banks compute the same `risk_id` for the same account, but the bus never sees the real account number.
+Every member bank derives the same `risk_id` for the same account, so accounts can be
+matched across institutions without the bus ever receiving an account number.
+
+**Scope of this protection — stated precisely, because it is narrower than it looks.**
+Pseudonymity here defends the account number against the *bus operator*, and against
+anyone who compromises the topic. It does **not** defend it against a *participating
+bank*. Account numbers are drawn from a small, structured space (on the order of 10⁹
+live accounts), so any key holder — which is every member — can enumerate that space
+offline in under a minute on one GPU and build a permanent `risk_id → account` table.
+No choice of hash function changes this, and a deliberately slow hash only raises the
+one-time cost while making derivation too slow for the payment path.
+
+Closing the gap requires a construction in which no single party holds a key that maps
+the whole space: an **OPRF** (RFC 9497) issued by a consortium authority, so that each
+guess costs one online, rate-limited, attributable round trip instead of a free offline
+hash. Tracked as a design decision in [SECURITY.md](SECURITY.md) §3.1.
+
+**Publisher authenticity.** `source_bank_id` is a field inside the payload, so on its
+own it is an unverified claim: any member could set it to a peer's name, publish a
+score of zero, and erase that peer's fraud flag. Every signal is therefore
+**Ed25519-signed** by its publisher and verified against a registered key before the
+bus stores it. Signing the payload end-to-end, rather than relying on transport
+authentication alone, also covers the bus operator, who could otherwise alter signals
+in flight or at rest undetected.
 
 Example risk-signal message:
 
 ```json
 {
-  "risk_id": "a3f9c2b1...e7d4",
+  "risk_id": "a29e47bbbb41332e7e03cbfb324ef72bff897cf7d6e96a3950edecdb4768f420",
   "risk_score": 92,
   "confidence": 0.94,
   "reason_codes": ["new_beneficiary", "high_velocity", "suspicious_pattern"],
-  "model_version": "v0.4-fl",
+  "model_version": "m0-demo-stub",
   "source_bank_id": "BANK-B",
   "ttl_hours": 24,
-  "timestamp": "2026-08-18T14:10:00Z"
+  "timestamp": "2026-08-22T14:10:00Z"
 }
 ```
 
-Access to the bus is restricted using mTLS, OAuth2/OIDC, and per-topic ACLs.
+Transport access is restricted using mTLS, OAuth2/OIDC, and per-topic ACLs — planned
+for M3, not yet implemented. Those controls protect the channel; the Ed25519 signature
+above protects the message, which is what makes the per-bank partitioning meaningful
+even against the operator running the channel.
 
-**Outcome:** All participating banks can see which accounts are currently risky, without anyone sharing raw transaction data or plain account numbers.
+**Outcome:** All participating banks can see which accounts are currently risky without
+sharing raw transaction data, and without any account number reaching the bus — subject
+to the scope note above: a member bank holding the consortium key can still recover
+account numbers from the IDs.
 
 ### 3.3 AI Banking Assistant (BankBot) Layer
 
@@ -80,13 +125,34 @@ BankBot is an AI assistant integrated into the bank’s transaction flow (simila
 Before executing a transfer, BankBot:
 
 1. Takes the receiver account (e.g. `ACC-999`).
-2. Computes the same `risk_id` using the shared hash function and salt.
+2. Normalizes the account and computes the same `risk_id` using the consortium key.
 3. Queries the Shared Risk-Signal Bus for that `risk_id`.
-4. Applies policy:
-   - Low → allow
-   - Medium → pause and step-up auth (OTP, extra questions)
-   - High → block and suggest contacting support
-5. Logs the decision with risk score and reason codes for audit.
+4. Applies policy (`aris.schema.apply_policy`), which resolves on three inputs, not
+   just the score:
+   - **Bus unreachable** → never allow. Defaults to step-up, and `PolicyConfig`
+     refuses any configuration that would fail open. A lookup that returns "no
+     signal" is deliberately distinguished from one that did not answer, so an
+     outage can never present as an all-clear.
+   - **Score ≥ `block_at`** (default 85) → block and suggest contacting support — but
+     only if the publishing bank's own `confidence` clears `min_confidence_to_block`.
+     A block freezes an innocent customer's payments for up to the full TTL with no
+     retraction path, so one member's low-confidence assertion is capped at step-up.
+   - **Score ≥ `step_up_at`** (default 50) → step-up auth (OTP, extra questions).
+   - **Amount above `step_up_above_amount_minor`** (default ₹100,000) → step-up even
+     for an account the network has never flagged.
+   - Otherwise → allow.
+5. Writes an audit record for **every** decision, including allows. The record
+   carries the transfer ID, customer reference, amount, currency, derived `risk_id`,
+   decision, lookup status, score, reason codes, the banks that contributed, the
+   model version, and the policy thresholds in force — enough to reconcile against
+   the core banking ledger and to explain a past decision under the rules that
+   applied at the time.
+
+**No score oracle.** The reply shown to the customer deliberately omits the numeric
+score, the flagging bank, and the `risk_id`. Echoing any of them back would turn the
+transfer form into a probing oracle: a fraudster could test accounts through the
+assistant to learn which of their mule accounts the network has burned, and tune their
+behaviour just under the threshold.
 
 **Outcome:** Users are protected from sending money to accounts that have been flagged as risky by any participating bank.
 
@@ -98,7 +164,8 @@ Before executing a transfer, BankBot:
 
 Bank B’s model scores `ACC-999` as high risk: `risk_score = 92`.
 
-Bank B computes `risk_id_999 = SHA256("ACC-999" ∥ SALT)` → e.g. `a3f9c2b1...e7d4`.
+Bank B computes `risk_id_999 = HMAC-SHA256(consortium_key, "ACC-999")` → e.g.
+`a29e47bb…f420`, and signs the signal with its Ed25519 key.
 
 Bank B publishes that signal to the bus (no plain account number).
 
@@ -106,13 +173,17 @@ Bank B publishes that signal to the bus (no plain account number).
 
 Anu asks BankBot: “Send ₹5,000 to ACC-999.”
 
-Bank A computes the same `risk_id`, queries the bus, finds score 92. Policy: if `risk_score > 85` → block.
+Bank A derives the same `risk_id`, queries the bus, finds score 92. Policy: if
+`risk_score >= 85` → block.
 
 BankBot replies: *This transfer looks risky. The receiver account has been flagged for suspicious activity by our fraud network. For your safety, this transaction is blocked.*
 
 **Result:** Anu is protected from fraud first detected in a different bank, without sharing raw transaction data or plain account numbers.
 
-## 5. Datasets and Tools
+## 5. Datasets and Tools (planned)
+
+None of the following are current dependencies of this repository; they are the
+intended stack for M1–M5. The M0 code depends only on `pydantic` and `cryptography`.
 
 **Datasets:** IEEE-CIS Fraud Detection (Kaggle), ULB Credit Card Fraud, PaySim.
 

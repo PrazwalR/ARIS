@@ -4,10 +4,73 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aris"
-version = "0.1.0"
+dynamic = ["version"]
 description = "AI-Agent Risk Integration System"
 readme = "README.md"
 requires-python = ">=3.10"
+license = { file = "LICENSE" }
+
+# Runtime dependencies. Deliberately minimal: this is what the M0 core needs and
+# nothing more. The heavy federated-learning and API stacks arrive with the
+# milestones that actually use them, as extras below.
+dependencies = [
+    "pydantic>=2.7",      # schema validation on the shared contract
+    "cryptography>=42.0", # Ed25519 publisher attestation
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2",
+    "ruff>=0.6",
+    "mypy>=1.11",
+]
+# M1 -- federated learning. Not imported by any code yet.
+ml = [
+    "numpy>=1.26",
+    "pandas>=2.2",
+    "scikit-learn>=1.4",
+    "torch>=2.2",
+    "flwr>=1.9",
+]
+# M4 -- BankBot HTTP API. Not imported by any code yet.
+api = [
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.30",
+    "httpx>=0.27",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.dynamic]
+# Single source of truth: src/aris/__init__.py
+version = { attr = "aris.__version__" }
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "SIM", "UP", "ARG", "RET", "C4", "PIE", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+# Pytest fixtures are requested by name and are often used only for the
+# environment they set up, and fakes must match the interface they stand in for
+# whether or not they read every argument.
+"tests/*" = ["ARG002", "ARG001"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+files = ["src"]
+
+[[tool.mypy.overrides]]
+module = ["flwr.*", "torch.*", "sklearn.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Keeps `pytest` working from a bare checkout, without requiring `pip install -e .`.
+pythonpath = ["src"]
+addopts = "-q --strict-markers --strict-config"

@@ -28,7 +28,10 @@ AI never puts a plain account number on the bus. Backend never retrains the mode
 
 ### M0 Foundation — **done** (all three, shared)
 
-Already in repo: hashing, in-memory bus, policy, BankBot demo, Anu story.
+Already in repo: keyed hashing, Ed25519 publisher attestation, in-memory bus, policy,
+BankBot demo, Anu story. 124 tests, ruff + `mypy --strict` clean. Threat model and known
+limitations are written up in [SECURITY.md](SECURITY.md) — read it before extending the
+bus, since several of the open items constrain the M3 design.
 
 ---
 
@@ -58,7 +61,11 @@ Shipped: Flower `NumPyClient` per bank, Flower FedAvg aggregator, ULB + syntheti
 | **AI-2** | Publisher adapter: model output → `RiskSignal` (no raw ACC) |
 | **AI-1** | Hook: after FL round, export `model_version` string onto every signal |
 
-**Handoff:** Backend exposes `publish(signal)` and `lookup(risk_id)` with the same API as `InMemoryRiskBus`.
+**Handoff:** Backend exposes `publish(signed)` and `lookup(risk_id)` implementing the
+`RiskBus` interface in `src/aris/bus.py`. Note `publish` takes a **`SignedRiskSignal`**,
+not a bare `RiskSignal` — publishers sign with Ed25519 and the bus verifies against the
+consortium keyring before storing. `lookup` returns a `LookupResult` that distinguishes
+"no signal" from "bus unavailable", and must never raise into the transfer path.
 
 ---
 
@@ -98,7 +105,7 @@ Shipped: Flower `NumPyClient` per bank, Flower FedAvg aggregator, ULB + syntheti
 | --- | --- |
 | `src/aris/fl/` | AI-1 |
 | `src/aris/` scoring / explain (to be added as `scorer.py`, `explain.py`) | AI-2 |
-| `src/aris/bus.py`, `src/aris/bankbot.py`, `src/aris/hashing.py`, future `api/` | Backend |
+| `src/aris/bus.py`, `src/aris/bankbot.py`, `src/aris/hashing.py`, `src/aris/attestation.py`, future `api/` | Backend |
 | `src/aris/schema.py` | **All — change only with the group** |
 | `docs/PROJECT.md` | Shared report |
 | `README.md` Phase log | Whoever closed the phase (must update) |

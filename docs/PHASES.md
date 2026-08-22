@@ -12,13 +12,22 @@ Each phase has a **goal**, **deliverables**, and a **done when** check. We imple
 
 **Deliverables**
 
-- Hashed risk ID: `risk_id = SHA256(account ∥ SALT)`
-- In-memory risk bus (same message shape as Kafka later)
-- Policy: low allow / medium step-up / high block
-- BankBot `pre_transaction` hook + audit log
+- Keyed risk ID: `risk_id = HMAC-SHA256(consortium_key, normalize(account))`, loaded
+  fail-closed (no key configured → raises, never a default)
+- Ed25519 publisher attestation: signals are signed and verified against a consortium
+  keyring, so a member cannot publish under a peer's name
+- In-memory risk bus (same message shape as Kafka later): per-bank signals aggregated
+  by highest live score, TTL expiry, replay rejection, per-publisher flood quotas
+- Policy: low allow / medium step-up / high block, plus step-up on large amounts, a
+  confidence floor before blocking, and a bus outage that resolves to step-up rather
+  than allow
+- BankBot `pre_transaction` hook, idempotent on `transfer_id`, plus a bounded audit log
+  with ledger-reconcilable fields that counts anything it drops
 - Demo: Bank B publishes ACC-999; Anu’s transfer is blocked
 
-**Done when:** `python -m aris.demo.anu_transfer` prints a block decision with score 92 and hashed ID (never the raw account on the bus).
+**Done when:** `python -m aris.demo.anu_transfer` prints a block decision with score 92
+and a hashed ID (never the raw account on the bus), and a hostile member's attempt to
+retract another bank's flag is rejected. ✅ Met.
 
 ---
 
@@ -82,7 +91,7 @@ Each phase has a **goal**, **deliverables**, and a **done when** check. We imple
 **Deliverables**
 
 - FastAPI (or CLI) “Send ₹5,000 to ACC-999”
-- Thresholds configurable (e.g. block if score > 85)
+- Thresholds configurable (defaults: block at score >= 85, step-up at >= 50)
 - Step-up auth stub for medium risk
 - Audit log: decision, score, reason codes, model version
 
