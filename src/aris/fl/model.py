@@ -2,27 +2,34 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
+import numpy.typing as npt
 
 
 class FraudMLP:
     def __init__(self, n_features: int, hidden: int = 16, seed: int = 42) -> None:
         rng = np.random.default_rng(seed)
         scale = np.sqrt(2 / n_features)
-        self.w1 = rng.normal(0, scale, size=(n_features, hidden)).astype(np.float32)
-        self.b1 = np.zeros(hidden, dtype=np.float32)
-        self.w2 = rng.normal(0, np.sqrt(2 / hidden), size=(hidden, 1)).astype(np.float32)
-        self.b2 = np.zeros(1, dtype=np.float32)
+        self.w1: npt.NDArray[Any] = rng.normal(0, scale, size=(n_features, hidden)).astype(
+            np.float32
+        )
+        self.b1: npt.NDArray[Any] = np.zeros(hidden, dtype=np.float32)
+        self.w2: npt.NDArray[Any] = rng.normal(0, np.sqrt(2 / hidden), size=(hidden, 1)).astype(
+            np.float32
+        )
+        self.b2: npt.NDArray[Any] = np.zeros(1, dtype=np.float32)
 
-    def parameters(self) -> list[np.ndarray]:
+    def parameters(self) -> list[npt.NDArray[Any]]:
         return [self.w1, self.b1, self.w2, self.b2]
 
 
-def get_weights(model: FraudMLP) -> list[np.ndarray]:
+def get_weights(model: FraudMLP) -> list[npt.NDArray[Any]]:
     return [p.copy() for p in model.parameters()]
 
 
-def set_weights(model: FraudMLP, weights: list[np.ndarray]) -> None:
+def set_weights(model: FraudMLP, weights: list[npt.NDArray[Any]]) -> None:
     model.w1, model.b1, model.w2, model.b2 = (w.copy() for w in weights)
 
 
@@ -30,18 +37,23 @@ def new_model(n_features: int, hidden: int = 16, seed: int = 42) -> FraudMLP:
     return FraudMLP(n_features, hidden=hidden, seed=seed)
 
 
-def _forward(model: FraudMLP, x: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def _forward(
+    model: FraudMLP, x: npt.NDArray[Any]
+) -> tuple[npt.NDArray[Any], npt.NDArray[Any], npt.NDArray[Any]]:
     h = np.maximum(0.0, x @ model.w1 + model.b1)
     logits = (h @ model.w2 + model.b2).reshape(-1)
     return logits, h, x
 
 
-def _sigmoid(z: np.ndarray) -> np.ndarray:
+def _sigmoid(z: npt.NDArray[Any]) -> npt.NDArray[Any]:
     z = np.clip(z, -20, 20)
-    return 1.0 / (1.0 + np.exp(-z))
+    result: npt.NDArray[Any] = 1.0 / (1.0 + np.exp(-z))
+    return result
 
 
-def predict_scores(model: FraudMLP, x: np.ndarray, batch_size: int = 1024) -> np.ndarray:
+def predict_scores(
+    model: FraudMLP, x: npt.NDArray[Any], batch_size: int = 1024
+) -> npt.NDArray[Any]:
     x = np.asarray(x, dtype=np.float32)
     parts = []
     for i in range(0, len(x), batch_size):
@@ -52,8 +64,8 @@ def predict_scores(model: FraudMLP, x: np.ndarray, batch_size: int = 1024) -> np
 
 def train_local(
     model: FraudMLP,
-    x: np.ndarray,
-    y: np.ndarray,
+    x: npt.NDArray[Any],
+    y: npt.NDArray[Any],
     epochs: int,
     batch_size: int,
     lr: float,
@@ -93,5 +105,6 @@ def train_local(
     return {"loss": last}
 
 
-def risk_score_from_proba(proba: np.ndarray) -> np.ndarray:
-    return np.clip(np.round(proba * 100), 0, 100).astype(int)
+def risk_score_from_proba(proba: npt.NDArray[Any]) -> npt.NDArray[Any]:
+    result: npt.NDArray[Any] = np.clip(np.round(proba * 100), 0, 100).astype(int)
+    return result

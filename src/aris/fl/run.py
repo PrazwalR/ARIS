@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 
 from aris.fl.client import BankFlowerClient
 from aris.fl.config import DATA_PROCESSED, TrainConfig
@@ -133,8 +134,8 @@ def run_experiment(
 
 def _train_local_baselines(
     clients: list[BankFlowerClient],
-    x_te: np.ndarray,
-    y_te: np.ndarray,
+    x_te: npt.NDArray[Any],
+    y_te: npt.NDArray[Any],
     cfg: TrainConfig,
 ) -> list[dict[str, float]]:
     """Same local steps as FL (epochs x rounds) so the comparison is fair."""
@@ -159,7 +160,7 @@ def _train_local_baselines(
 def _federated_train(
     clients: list[BankFlowerClient],
     cfg: TrainConfig,
-) -> tuple[list[np.ndarray], list[dict[str, Any]]]:
+) -> tuple[list[npt.NDArray[Any]], list[dict[str, Any]]]:
     weights = clients[0].get_parameters({})
     logs = []
     for rnd in range(1, cfg.rounds + 1):
@@ -169,7 +170,7 @@ def _federated_train(
             "learning_rate": cfg.learning_rate,
             "server_round": rnd,
         }
-        updates: list[tuple[list[np.ndarray], int]] = []
+        updates: list[tuple[list[npt.NDArray[Any]], int]] = []
         for client in clients:
             new_w, n, _fit_metrics = client.fit(weights, config)
             updates.append((new_w, n))

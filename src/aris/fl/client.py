@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-import numpy as np
+import numpy.typing as npt
 from flwr.client import NumPyClient
 
 from aris.fl.model import get_weights, new_model, set_weights, train_local
@@ -14,8 +14,8 @@ class BankFlowerClient(NumPyClient):
     def __init__(
         self,
         bank_id: str,
-        x: np.ndarray,
-        y: np.ndarray,
+        x: npt.NDArray[Any],
+        y: npt.NDArray[Any],
         hidden: int,
         seed: int,
     ) -> None:
@@ -26,12 +26,12 @@ class BankFlowerClient(NumPyClient):
         self.seed = seed
         self.model = new_model(x.shape[1], hidden=hidden, seed=seed)
 
-    def get_parameters(self, _config: dict[str, Any]) -> list[np.ndarray]:
+    def get_parameters(self, _config: dict[str, Any]) -> list[npt.NDArray[Any]]:
         return get_weights(self.model)
 
     def fit(
-        self, parameters: list[np.ndarray], config: dict[str, Any]
-    ) -> tuple[list[np.ndarray], int, dict[str, Any]]:
+        self, parameters: list[npt.NDArray[Any]], config: dict[str, Any]
+    ) -> tuple[list[npt.NDArray[Any]], int, dict[str, Any]]:
         set_weights(self.model, parameters)
         loss_metrics = train_local(
             self.model,
@@ -46,7 +46,7 @@ class BankFlowerClient(NumPyClient):
         return get_weights(self.model), len(self.y), metrics
 
     def evaluate(
-        self, parameters: list[np.ndarray], _config: dict[str, Any]
+        self, parameters: list[npt.NDArray[Any]], _config: dict[str, Any]
     ) -> tuple[float, int, dict[str, Any]]:
         set_weights(self.model, parameters)
         return 0.0, len(self.y), {"bank_id": self.bank_id}

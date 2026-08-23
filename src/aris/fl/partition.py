@@ -2,26 +2,29 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
+import numpy.typing as npt
 
 from aris.fl.config import BANK_IDS
 
 
 def equal_contiguous_shards(
-    x: np.ndarray,
-    y: np.ndarray,
+    x: npt.NDArray[Any],
+    y: npt.NDArray[Any],
     num_banks: int,
-) -> list[tuple[np.ndarray, np.ndarray]]:
+) -> list[tuple[npt.NDArray[Any], npt.NDArray[Any]]]:
     splits = np.array_split(np.arange(len(y)), num_banks)
     return [(x[idx], y[idx]) for idx in splits]
 
 
 def temporal_shards(
-    x: np.ndarray,
-    y: np.ndarray,
-    time_col: np.ndarray,
+    x: npt.NDArray[Any],
+    y: npt.NDArray[Any],
+    time_col: npt.NDArray[Any],
     num_banks: int,
-) -> list[tuple[np.ndarray, np.ndarray]]:
+) -> list[tuple[npt.NDArray[Any], npt.NDArray[Any]]]:
     """Split by time windows so banks see different periods (non-IID)."""
     order = np.argsort(time_col)
     x, y = x[order], y[order]
@@ -30,12 +33,12 @@ def temporal_shards(
 
 
 def dirichlet_shards(
-    x: np.ndarray,
-    y: np.ndarray,
+    x: npt.NDArray[Any],
+    y: npt.NDArray[Any],
     num_banks: int,
     alpha: float,
     seed: int,
-) -> list[tuple[np.ndarray, np.ndarray]]:
+) -> list[tuple[npt.NDArray[Any], npt.NDArray[Any]]]:
     """Label-skew non-IID (Dirichlet), common FL benchmark."""
     rng = np.random.default_rng(seed)
     shards: list[list[int]] = [[] for _ in range(num_banks)]
@@ -49,7 +52,7 @@ def dirichlet_shards(
         for bank, count in enumerate(counts):
             shards[bank].extend(idx[start : start + count].tolist())
             start += count
-    out: list[tuple[np.ndarray, np.ndarray]] = []
+    out: list[tuple[npt.NDArray[Any], npt.NDArray[Any]]] = []
     for bank in range(num_banks):
         ix = np.array(shards[bank], dtype=int)
         rng.shuffle(ix)
@@ -57,7 +60,7 @@ def dirichlet_shards(
     return out
 
 
-def _counts_from_props(n: int, props: np.ndarray) -> list[int]:
+def _counts_from_props(n: int, props: npt.NDArray[Any]) -> list[int]:
     props = props / props.sum()
     counts = np.floor(props * n).astype(int)
     remainder = n - int(counts.sum())
@@ -68,12 +71,12 @@ def _counts_from_props(n: int, props: np.ndarray) -> list[int]:
 
 
 def holdout_split(
-    x: np.ndarray,
-    y: np.ndarray,
+    x: npt.NDArray[Any],
+    y: npt.NDArray[Any],
     frac: float,
     seed: int,
-    time_col: np.ndarray | None = None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    time_col: npt.NDArray[Any] | None = None,
+) -> tuple[npt.NDArray[Any], npt.NDArray[Any], npt.NDArray[Any], npt.NDArray[Any]]:
     """Global holdout. Time-aware if time_col is given (last frac by time)."""
     if time_col is not None:
         order = np.argsort(time_col)
@@ -88,13 +91,13 @@ def holdout_split(
 
 
 def pooled_holdout_from_shards(
-    shards: list[tuple[np.ndarray, np.ndarray]],
+    shards: list[tuple[npt.NDArray[Any], npt.NDArray[Any]]],
     frac: float,
     seed: int,
-) -> tuple[list[tuple[np.ndarray, np.ndarray]], np.ndarray, np.ndarray]:
+) -> tuple[list[tuple[npt.NDArray[Any], npt.NDArray[Any]]], npt.NDArray[Any], npt.NDArray[Any]]:
     """Take a holdout slice from every bank, then pool those rows for evaluation."""
     rng = np.random.default_rng(seed)
-    kept: list[tuple[np.ndarray, np.ndarray]] = []
+    kept: list[tuple[npt.NDArray[Any], npt.NDArray[Any]]] = []
     hx, hy = [], []
     for x, y in shards:
         n = len(y)

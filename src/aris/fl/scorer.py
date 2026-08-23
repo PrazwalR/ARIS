@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 
 from aris.fl.model import FraudMLP, new_model, predict_scores, risk_score_from_proba, set_weights
 
@@ -28,7 +29,7 @@ class FraudScorer:
     def from_weights(
         cls,
         n_features: int,
-        weights: list[np.ndarray],
+        weights: list[npt.NDArray[Any]],
         hidden: int = 16,
         model_version: str = "v0.4-fl",
     ) -> FraudScorer:
@@ -36,10 +37,10 @@ class FraudScorer:
         set_weights(model, weights)
         return cls(model, model_version=model_version)
 
-    def predict_proba(self, x: np.ndarray) -> np.ndarray:
+    def predict_proba(self, x: npt.NDArray[Any]) -> npt.NDArray[Any]:
         return predict_scores(self.model, x)
 
-    def score_row(self, x_row: np.ndarray) -> ScoreResult:
+    def score_row(self, x_row: npt.NDArray[Any]) -> ScoreResult:
         x = np.asarray(x_row, dtype=np.float32).reshape(1, -1)
         p = float(self.predict_proba(x)[0])
         score = int(risk_score_from_proba(np.array([p]))[0])
@@ -52,7 +53,7 @@ class FraudScorer:
         )
 
 
-def save_weights(path: Path | str, weights: list[np.ndarray], meta: dict[str, Any]) -> None:
+def save_weights(path: Path | str, weights: list[npt.NDArray[Any]], meta: dict[str, Any]) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     arrays: dict[str, Any] = {f"w{i}": w for i, w in enumerate(weights)}
@@ -60,7 +61,7 @@ def save_weights(path: Path | str, weights: list[np.ndarray], meta: dict[str, An
     np.savez(path, **arrays)
 
 
-def load_weights(path: Path | str) -> tuple[list[np.ndarray], dict[str, Any]]:
+def load_weights(path: Path | str) -> tuple[list[npt.NDArray[Any]], dict[str, Any]]:
     blob = np.load(path, allow_pickle=True)
     keys = sorted(k for k in blob.files if k.startswith("w"))
     weights = [blob[k] for k in keys]

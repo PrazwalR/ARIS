@@ -6,15 +6,18 @@ from collections.abc import Callable
 from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 
-flower_aggregate: Callable[[list[tuple[list[np.ndarray], int]]], list[np.ndarray]] | None
+flower_aggregate: (
+    Callable[[list[tuple[list[npt.NDArray[Any]], int]]], list[npt.NDArray[Any]]] | None
+)
 try:
     from flwr.server.strategy.aggregate import aggregate as flower_aggregate
 except ImportError:  # pragma: no cover
     flower_aggregate = None
 
 
-def fedavg(updates: list[tuple[list[np.ndarray], int]]) -> list[np.ndarray]:
+def fedavg(updates: list[tuple[list[npt.NDArray[Any]], int]]) -> list[npt.NDArray[Any]]:
     """Weighted average of client weight lists. `updates` is (weights, n_examples)."""
     if not updates:
         raise ValueError("FedAvg needs at least one client update")
@@ -23,10 +26,10 @@ def fedavg(updates: list[tuple[list[np.ndarray], int]]) -> list[np.ndarray]:
     return _python_fedavg(updates)
 
 
-def _python_fedavg(updates: list[tuple[list[np.ndarray], int]]) -> list[np.ndarray]:
+def _python_fedavg(updates: list[tuple[list[npt.NDArray[Any]], int]]) -> list[npt.NDArray[Any]]:
     total = float(sum(n for _, n in updates))
     n_layers = len(updates[0][0])
-    out: list[np.ndarray] = []
+    out: list[npt.NDArray[Any]] = []
     for i in range(n_layers):
         acc = None
         for weights, n in updates:

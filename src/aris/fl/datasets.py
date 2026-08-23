@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 from urllib.request import urlretrieve
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 
 from aris.fl.config import (
@@ -21,9 +23,9 @@ from aris.fl.config import (
 @dataclass
 class TabularFraud:
     name: str
-    x: np.ndarray
-    y: np.ndarray
-    time: np.ndarray | None
+    x: npt.NDArray[Any]
+    y: npt.NDArray[Any]
+    time: npt.NDArray[Any] | None
     feature_names: list[str]
 
 

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
+import numpy.typing as npt
 from sklearn.metrics import (
     average_precision_score,
     precision_recall_curve,
@@ -9,7 +12,7 @@ from sklearn.metrics import (
 )
 
 
-def classification_metrics(y_true: np.ndarray, scores: np.ndarray) -> dict[str, float]:
+def classification_metrics(y_true: npt.NDArray[Any], scores: npt.NDArray[Any]) -> dict[str, float]:
     """AUC, PR-AUC, recall at 5% FPR, FPR at 50% recall."""
     y_true = np.asarray(y_true).astype(int)
     scores = np.asarray(scores, dtype=float)
@@ -42,14 +45,16 @@ def classification_metrics(y_true: np.ndarray, scores: np.ndarray) -> dict[str, 
     }
 
 
-def _best_tpr_at_fpr(fpr: np.ndarray, tpr: np.ndarray, max_fpr: float) -> float:
+def _best_tpr_at_fpr(fpr: npt.NDArray[Any], tpr: npt.NDArray[Any], max_fpr: float) -> float:
     ok = fpr <= max_fpr
     if not np.any(ok):
         return 0.0
     return float(tpr[ok].max())
 
 
-def _fpr_at_recall(y_true: np.ndarray, scores: np.ndarray, target_recall: float) -> float:
+def _fpr_at_recall(
+    y_true: npt.NDArray[Any], scores: npt.NDArray[Any], target_recall: float
+) -> float:
     order = np.argsort(-scores)
     y = y_true[order]
     tp = np.cumsum(y)
