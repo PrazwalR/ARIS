@@ -24,12 +24,11 @@ dev = [
     "ruff>=0.6",
     "mypy>=1.11",
 ]
-# M1 -- federated learning. Not imported by any code yet.
+# M1 -- federated learning. Training uses a NumPy MLP, not torch.
 ml = [
     "numpy>=1.26",
     "pandas>=2.2",
     "scikit-learn>=1.4",
-    "torch>=2.2",
     "flwr>=1.9",
 ]
 # M4 -- BankBot HTTP API. Not imported by any code yet.
@@ -61,12 +60,15 @@ select = ["E", "F", "W", "B", "SIM", "UP", "ARG", "RET", "C4", "PIE", "RUF"]
 "tests/*" = ["ARG002", "ARG001"]
 
 [tool.mypy]
-python_version = "3.10"
+# Higher than requires-python's 3.10 floor: numpy's bundled stubs use PEP 695
+# `type` statements that only parse under 3.12+. This only affects how mypy
+# reads stub syntax, not what runtime versions the code itself supports.
+python_version = "3.12"
 strict = true
 files = ["src"]
 
 [[tool.mypy.overrides]]
-module = ["flwr.*", "torch.*", "sklearn.*"]
+module = ["flwr.*", "sklearn.*", "pandas.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

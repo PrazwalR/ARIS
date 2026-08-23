@@ -1,9 +1,11 @@
 """Federated fraud training (M1): Flower clients, FedAvg, local vs global metrics."""
 
+from typing import Any
+
 __all__ = ["run_experiment"]
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     if name == "run_experiment":
         from aris.fl.run import run_experiment
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -51,14 +52,15 @@ class FraudScorer:
         )
 
 
-def save_weights(path: Path | str, weights: list[np.ndarray], meta: dict) -> None:
+def save_weights(path: Path | str, weights: list[np.ndarray], meta: dict[str, Any]) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    weight_dict = {f"w{i}": w for i, w in enumerate(weights)}
-    np.savez(path, meta=np.array([meta], dtype=object), **weight_dict)
+    arrays: dict[str, Any] = {f"w{i}": w for i, w in enumerate(weights)}
+    arrays["meta"] = np.array([meta], dtype=object)
+    np.savez(path, **arrays)
 
 
-def load_weights(path: Path | str) -> tuple[list[np.ndarray], dict]:
+def load_weights(path: Path | str) -> tuple[list[np.ndarray], dict[str, Any]]:
     blob = np.load(path, allow_pickle=True)
     keys = sorted(k for k in blob.files if k.startswith("w"))
     weights = [blob[k] for k in keys]

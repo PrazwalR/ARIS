@@ -64,7 +64,7 @@ def _counts_from_props(n: int, props: np.ndarray) -> list[int]:
     frac_order = np.argsort(-(props * n - counts))
     for i in range(remainder):
         counts[int(frac_order[i % len(counts)])] += 1
-    return counts.tolist()
+    return [int(c) for c in counts]
 
 
 def holdout_split(

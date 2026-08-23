@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import numpy as np
 
+flower_aggregate: Callable[[list[tuple[list[np.ndarray], int]]], list[np.ndarray]] | None
 try:
     from flwr.server.strategy.aggregate import aggregate as flower_aggregate
 except ImportError:  # pragma: no cover

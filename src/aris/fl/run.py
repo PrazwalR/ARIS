@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -33,7 +34,7 @@ def run_experiment(
     dataset: str = "synthetic",
     cfg: TrainConfig | None = None,
     partition: str = "auto",
-) -> dict:
+) -> dict[str, Any]:
     cfg = cfg or TrainConfig()
     data = load_dataset(
         dataset,
@@ -94,7 +95,7 @@ def run_experiment(
         },
     )
 
-    report = {
+    return {
         "dataset": data.name,
         "partition": part,
         "num_banks": cfg.num_banks,
@@ -128,7 +129,6 @@ def run_experiment(
         "rounds_log": round_log,
         "model_version": "v0.4-fl",
     }
-    return report
 
 
 def _train_local_baselines(
@@ -159,7 +159,7 @@ def _train_local_baselines(
 def _federated_train(
     clients: list[BankFlowerClient],
     cfg: TrainConfig,
-) -> tuple[list[np.ndarray], list[dict]]:
+) -> tuple[list[np.ndarray], list[dict[str, Any]]]:
     weights = clients[0].get_parameters({})
     logs = []
     for rnd in range(1, cfg.rounds + 1):
@@ -178,7 +178,7 @@ def _federated_train(
     return weights, logs
 
 
-def write_report(report: dict, path: Path) -> None:
+def write_report(report: dict[str, Any], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(as_plain_floats(report), indent=2), encoding="utf-8")
 
@@ -193,9 +193,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--banks", type=int, default=5)
     parser.add_argument("--rounds", type=int, default=8)
     parser.add_argument("--epochs", type=int, default=4)
-    parser.add_argument(
-        "--partition", default="auto", choices=("auto", "temporal", "dirichlet")
-    )
+    parser.add_argument("--partition", default="auto", choices=("auto", "temporal", "dirichlet"))
     parser.add_argument(
         "--max-rows",
         type=int,
