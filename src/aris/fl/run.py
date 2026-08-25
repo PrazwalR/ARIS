@@ -28,7 +28,9 @@ from aris.fl.partition import (
     pooled_holdout_from_shards,
     temporal_shards,
 )
+from aris.fl.privacy import epsilon_for_dpsgd
 from aris.fl.scorer import save_weights
+from aris.fl.secure_agg import secure_fedavg
 
 
 def run_experiment(
@@ -75,7 +77,7 @@ def run_experiment(
     ]
 
     local_metrics = _train_local_baselines(clients, x_te, y_te, cfg)
-    global_weights, round_log = _federated_train(clients, cfg)
+    global_weights, round_log, dp_steps_per_client = _federated_train(clients, cfg)
     global_model = new_model(clients[0].x.shape[1], hidden=cfg.hidden, seed=cfg.seed)
     set_weights(global_model, global_weights)
     global_scores = predict_scores(global_model, x_te)
@@ -126,9 +128,35 @@ def run_experiment(
         "privacy": {
             "raw_rows_shared": False,
             "server_sees": "model weight arrays + example counts only",
+            "secure_aggregation": cfg.secure_agg,
+            "differential_privacy": _dp_report(cfg, dp_steps_per_client),
         },
         "rounds_log": round_log,
         "model_version": "v0.4-fl",
+    }
+
+
+def _dp_report(cfg: TrainConfig, dp_steps_per_client: dict[str, int]) -> dict[str, Any]:
+    if not cfg.dp_enabled:
+        return {"enabled": False}
+    # Report the worst case: privacy protection is only as strong as the most
+    # exposed client, so use the largest per-client step count, not the mean.
+    max_steps = max(dp_steps_per_client.values()) if dp_steps_per_client else 0
+    epsilon = epsilon_for_dpsgd(
+        noise_multiplier=cfg.noise_multiplier,
+        num_steps=max_steps,
+        delta=cfg.dp_delta,
+    )
+    return {
+        "enabled": True,
+        "mechanism": "DP-SGD (per-example gradient clipping + Gaussian noise)",
+        "noise_multiplier": cfg.noise_multiplier,
+        "max_grad_norm": cfg.max_grad_norm,
+        "delta": cfg.dp_delta,
+        "max_client_steps": max_steps,
+        "epsilon": epsilon,
+        "epsilon_is_conservative_upper_bound": True,
+        "steps_per_client": dp_steps_per_client,
     }
 
 
@@ -160,23 +188,29 @@ def _train_local_baselines(
 def _federated_train(
     clients: list[BankFlowerClient],
     cfg: TrainConfig,
-) -> tuple[list[npt.NDArray[Any]], list[dict[str, Any]]]:
+) -> tuple[list[npt.NDArray[Any]], list[dict[str, Any]], dict[str, int]]:
     weights = clients[0].get_parameters({})
     logs = []
+    dp_steps_per_client: dict[str, int] = {c.bank_id: 0 for c in clients}
     for rnd in range(1, cfg.rounds + 1):
         config = {
             "local_epochs": cfg.local_epochs,
             "batch_size": cfg.batch_size,
             "learning_rate": cfg.learning_rate,
             "server_round": rnd,
+            "dp_enabled": cfg.dp_enabled,
+            "max_grad_norm": cfg.max_grad_norm,
+            "noise_multiplier": cfg.noise_multiplier,
         }
         updates: list[tuple[list[npt.NDArray[Any]], int]] = []
         for client in clients:
-            new_w, n, _fit_metrics = client.fit(weights, config)
+            new_w, n, fit_metrics = client.fit(weights, config)
             updates.append((new_w, n))
-        weights = fedavg(updates)
+            if cfg.dp_enabled:
+                dp_steps_per_client[client.bank_id] += int(fit_metrics.get("dp_steps", 0))
+        weights = secure_fedavg(updates, seed=cfg.seed + rnd) if cfg.secure_agg else fedavg(updates)
         logs.append({"round": rnd, "clients": len(updates)})
-    return weights, logs
+    return weights, logs, dp_steps_per_client
 
 
 def write_report(report: dict[str, Any], path: Path) -> None:
@@ -206,6 +240,19 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="JSON report path (default m1_metrics_<dataset>.json in data/processed)",
     )
+    parser.add_argument(
+        "--dp",
+        action="store_true",
+        help="M2: enable DP-SGD (per-example clipping + Gaussian noise)",
+    )
+    parser.add_argument("--noise-multiplier", type=float, default=1.0)
+    parser.add_argument("--max-grad-norm", type=float, default=1.0)
+    parser.add_argument("--dp-delta", type=float, default=1e-5)
+    parser.add_argument(
+        "--secure-agg",
+        action="store_true",
+        help="M2: aggregate via pairwise-masked secure sum instead of plain FedAvg",
+    )
     args = parser.parse_args(argv)
 
     cfg = TrainConfig(
@@ -213,6 +260,11 @@ def main(argv: list[str] | None = None) -> int:
         rounds=args.rounds,
         local_epochs=args.epochs,
         max_train_rows=args.max_rows,
+        dp_enabled=args.dp,
+        noise_multiplier=args.noise_multiplier,
+        max_grad_norm=args.max_grad_norm,
+        dp_delta=args.dp_delta,
+        secure_agg=args.secure_agg,
     )
     report = run_experiment(dataset=args.dataset, cfg=cfg, partition=args.partition)
     out = Path(args.out) if args.out else DATA_PROCESSED / f"m1_metrics_{args.dataset}.json"
@@ -228,6 +280,7 @@ def main(argv: list[str] | None = None) -> int:
                     "global_auc": report["global"]["auc"],
                     "global_pr_auc": report["global"]["pr_auc"],
                     "global_beats_mean_local_auc": report["global_beats_mean_local_auc"],
+                    "differential_privacy": report["privacy"]["differential_privacy"],
                     "metrics_path": str(out),
                     "checkpoint": report["checkpoint"],
                 }

@@ -6,12 +6,12 @@ Digital banking has made transactions faster and easier, but it has also increas
 
 ARIS (AI-Agent Risk Integration System) is a banking-security project that solves this problem. It enables multiple banks to collaboratively train a fraud-detection model using federated learning without sharing raw transaction data. When the model identifies a risky receiver account, it sends only a risk score (not raw data) to a Shared Risk-Signal Bus. An AI banking assistant (BankBot) checks this bus before executing transactions. If the risk score is high, BankBot pauses or blocks the transfer, protecting users from potential fraud—even if the fraud was first detected in a different bank.
 
-**Implementation status.** This document describes the full ARIS design. What is
-built today is the risk-signal layer: pseudonymous IDs, signed publication, the
-bus, the policy engine, and BankBot's pre-transaction check (M0). The federated
-learning layer of §3.1 is **design only — no training code exists yet** and is
-scheduled as M1 in [PHASES.md](PHASES.md). Sections below flag this where it
-applies.
+**Implementation status.** This document describes the full ARIS design. Built
+today: the risk-signal layer (pseudonymous IDs, signed publication, the bus, the
+policy engine, BankBot's pre-transaction check — M0), and the federated learning
+layer of §3.1 including DP-SGD and secure aggregation (M1, M2). Not yet built:
+Kafka (M3), the BankBot HTTP API (M4), and explainability/MLOps (M5+). See
+[PHASES.md](PHASES.md) for the full schedule.
 
 ## 2. Problem Statement
 
@@ -32,20 +32,25 @@ ARIS has three core layers.
 
 ### 3.1 Federated Learning Layer (Model Training)
 
-> **Status: design only.** No federated learning code exists in this repository
-> yet; `src/aris/fl/` is an empty package. Scheduled as M1.
+> **Status: built (M1, M2).** `src/aris/fl/` implements Flower-based FedAvg
+> training with a NumPy MLP (no torch dependency), plus DP-SGD and optional
+> secure aggregation. See the README M1/M2 phase log for verified results.
 
 Each bank keeps its raw transaction data on-prem. A central FL server coordinates training of a global fraud model.
 
 In each round:
 
 1. The server sends the current global model to each bank.
-2. Each bank trains locally on its own data and sends back model updates (weights/gradients).
-3. The server aggregates updates (e.g. FedAvg) and sends back an improved global model.
+2. Each bank trains locally on its own data — with per-example gradient clipping
+   and calibrated Gaussian noise (DP-SGD) when M2's privacy mode is enabled — and
+   sends back model updates (weights/gradients).
+3. The server aggregates updates (FedAvg, optionally via secure aggregation so it
+   never sees an individual bank's update in the clear) and sends back an
+   improved global model.
 
-No account numbers, transaction IDs, or customer data leave the bank in this layer.
+No account numbers, transaction IDs, or customer data leave the bank in this layer. DP-SGD additionally bounds how much any single training example — not just the raw data itself — can influence the published update, with a documented (ε, δ) budget (see the README M2 phase log for the accounting method and its conservatism).
 
-**Outcome:** All banks get a stronger fraud model that has learned from everyone but never saw anyone else’s raw data.
+**Outcome:** All banks get a stronger fraud model that has learned from everyone but never saw anyone else’s raw data, with a quantified bound on how much that model's updates can reveal about any one bank's records.
 
 ### 3.2 Shared Risk-Signal Bus (Cross-Bank Risk Sharing)
 
@@ -180,14 +185,17 @@ BankBot replies: *This transfer looks risky. The receiver account has been flagg
 
 **Result:** Anu is protected from fraud first detected in a different bank, without sharing raw transaction data or plain account numbers.
 
-## 5. Datasets and Tools (planned)
+## 5. Datasets and Tools
 
-None of the following are current dependencies of this repository; they are the
-intended stack for M1–M5. The M0 code depends only on `pydantic` and `cryptography`.
+The M0 code depends only on `pydantic` and `cryptography`. M1/M2 (`pip install
+-e ".[ml]"`) add `numpy`, `pandas`, `scikit-learn`, `flwr` — **no torch/Opacus**:
+DP-SGD (§3.1, M2) is implemented directly against the NumPy MLP rather than
+pulled in as a PyTorch dependency. Everything below M3 onward remains planned,
+not a current dependency.
 
-**Datasets:** IEEE-CIS Fraud Detection (Kaggle), ULB Credit Card Fraud, PaySim.
+**Datasets:** IEEE-CIS Fraud Detection (Kaggle), ULB Credit Card Fraud, PaySim — all wired up in `aris.fl.datasets`; ULB is verified end-to-end (README M1 phase log), PaySim/IEEE-CIS have loaders but need a manual Kaggle download to exercise.
 
-**FL:** Flower, NVFlare. **Bus:** Apache Kafka, Schema Registry. **Privacy:** Opacus, TenSEAL / Concrete-ML. **XAI / MLOps:** SHAP, LIME, MLflow, Prometheus+Grafana, Evidently AI.
+**Bus (planned, M3):** Apache Kafka, Schema Registry. **XAI / MLOps (planned, M5+):** SHAP, LIME, MLflow, Prometheus+Grafana, Evidently AI.
 
 **References:** Federated-Fraud-Detection-System (Flower + RF), federated_credit_card_fraud (Flower + PyTorch + Streamlit), NVFlare `hello-dp`.
 

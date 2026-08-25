@@ -4,7 +4,7 @@
 
 The goal: banks collaboratively train a fraud model with federated learning (no raw transactions leave the bank), and when a receiver account is high risk they publish only a **pseudonymous risk ID + score** to a shared bus. BankBot checks that bus before a transfer and can pause or block it—even if another bank first saw the fraud.
 
-**Status: M0 (the bus, the policy, and BankBot) is built and tested. Federated learning is not — see the phase table.**
+**Status: M0–M2 are built and tested — the bus, the policy, BankBot, federated learning, and DP-SGD privacy on training. See the phase table.**
 
 **Team:** 2 AI · 1 backend — see [`docs/TEAM.md`](docs/TEAM.md). After each phase, update the **Phase log** below.
 
@@ -14,8 +14,8 @@ The goal: banks collaboratively train a fraud model with federated learning (no 
 | --- | --- | --- | --- |
 | **M0** | Repo, keyed `risk_id` (HMAC-SHA256), signed signals (Ed25519), policy, in-memory bus, BankBot demo | Shared | **Done** |
 | **M1** | Flower FL with 3–5 simulated banks (ULB / PaySim / IEEE-CIS) | AI-1 | **Done** |
-| **M2** | Differential privacy + secure aggregation; privacy–utility metrics | AI-1 | Next |
-| **M3** | Kafka `risk-signals` topic, schema registry, ACLs | Backend | Later |
+| **M2** | Differential privacy (DP-SGD) + secure aggregation; privacy–utility metrics | AI-1 | **Done** |
+| **M3** | Kafka `risk-signals` topic, schema registry, ACLs | Backend | Next |
 | **M4** | BankBot pre-transaction API, thresholds, audit log | Backend | Later |
 | **M5** | SHAP/LIME, drift monitoring, model rollback | AI-2 | Later |
 | **M6+** | More banks, graph features, robust aggregation | AI-1 | Later |
@@ -78,7 +78,7 @@ Run: `python -m aris.demo.anu_transfer` · tests: `pytest` (see Quick start — 
 
 `global_beats_mean_local_auc = true`.
 
-Tests: `pytest` → **153 passed** (M0 + M1), including `test_synthetic_global_beats_mean_local_auc`. M0 Anu demo still blocks ACC-999.
+Tests: `pytest` → **182 passed** (M0 + M1 + M2), including `test_synthetic_global_beats_mean_local_auc`. M0 Anu demo still blocks ACC-999.
 
 #### How to run M1
 
@@ -107,9 +107,47 @@ Writes `data/processed/m1_metrics_<dataset>.json` and `data/processed/m1_global_
 4. **IEEE-CIS (optional):** Kaggle *IEEE-CIS Fraud Detection* → `data/raw/train_transaction.csv` → `python -m aris.fl.run --dataset ieee-cis --max-rows 50000`.
 5. **Confirm privacy:** open a metrics JSON — `privacy.raw_rows_shared` must be `false`. The bus still never sees plain account numbers (that is M0/M3).
 
-### M2 — Privacy on training
+### M2 — Privacy on training (completed)
 
-_Not started. Next: DP-SGD / secure aggregation (AI-1)._
+**Goal met:** local training is now DP-SGD (Abadi et al. 2016) — per-example L2 gradient clipping plus calibrated Gaussian noise on every mini-batch step — with a documented epsilon, and the model still converges at a meaningful privacy budget.
+
+#### What shipped
+
+| Piece | Where | What it does |
+| --- | --- | --- |
+| DP-SGD training | `src/aris/fl/model.py::train_local_dp` | Per-example gradient clip + noise, drop-in alternative to `train_local` |
+| Privacy accountant | `src/aris/fl/privacy.py` | zCDP composition (Bun & Steinke 2016) → `(epsilon, delta)`; see "accounting is conservative" below |
+| Secure aggregation | `src/aris/fl/secure_agg.py` | Pairwise-masked sum (Bonawitz et al. 2017, single-process simulation); optional, independent of DP |
+| Sweep CLI | `src/aris/fl/privacy_sweep.py` | Runs the same experiment across noise multipliers, writes the epsilon-vs-AUC table |
+
+**Accounting is conservative on purpose.** The accountant does not credit privacy amplification by subsampling — a correct amplification analysis needs a numerically-integrated subsampled-Gaussian RDP accountant (Abadi et al.'s "moments accountant"), and getting that wrong by *understating* epsilon is a privacy defect, not just an inaccuracy. Every mini-batch step is accounted as a full (non-amplified) Gaussian mechanism release, composed additively in zCDP. The epsilon reported is therefore always a valid upper bound, looser than what a full accountant would report for the same noise multiplier.
+
+**Secure aggregation is a different protection, not a substitute for DP.** Masking hides each bank's individual update from the aggregator; it says nothing about what the resulting *aggregate* model can leak about the union of all banks' data. `secure_fedavg` is numerically identical to plain FedAvg (masks cancel exactly — verified in `tests/test_fl_secure_agg.py`), so it costs nothing in accuracy; it can be turned on independently of `dp_enabled`.
+
+#### Verified privacy–utility table (synthetic, 5 banks, 8 rounds × 4 local epochs, `max_grad_norm=5.0`, `delta=1e-5`)
+
+| noise_multiplier | epsilon (upper bound) | Global AUC |
+| --- | --- | --- |
+| — (M1 baseline, no DP) | — | 0.655 |
+| 0.5 | 364.6 | 0.633 |
+| 1.0 | 118.3 | 0.632 |
+| 2.0 | 43.1 | 0.631 |
+| 4.0 | 17.6 | 0.628 |
+| 8.0 | 7.8 | 0.621 |
+| 15.0 | 3.9 | 0.612 |
+| 30.0 | 1.9 | 0.594 |
+| 60.0 | 0.9 | 0.574 |
+
+Even at single-digit epsilon the DP model still clears M1's mean-of-local-models baseline (0.572) — the federated signal survives the noise. Tests: `pytest` → **182 passed** (M0 + M1 + M2), including convergence and epsilon-monotonicity checks in `tests/test_fl_m2.py`.
+
+#### How to run M2
+
+```bash
+python -m aris.fl.run --dataset synthetic --dp --noise-multiplier 4.0 --max-grad-norm 5.0
+python -m aris.fl.privacy_sweep --dataset synthetic
+```
+
+Writes `data/processed/m1_metrics_synthetic.json` (single run, `privacy.differential_privacy` block) and `data/processed/m2_privacy_utility_synthetic.json` (the sweep table). Add `--secure-agg` to the single run to aggregate through pairwise masking instead of plain FedAvg.
 
 ### M3 — Kafka risk bus
 
@@ -170,7 +208,7 @@ pytest
 ```
 </details>
 
-The federated-learning and HTTP stacks are optional extras, deliberately not installed by default (nothing imports them yet, and torch alone is ~2.5 GB): `pip install -e ".[ml]"` for M1, `pip install -e ".[api]"` for M4.
+The federated-learning and HTTP stacks are optional extras, not installed by default: `pip install -e ".[ml]"` for M1/M2, `pip install -e ".[api]"` for M4.
 
 ## Layout
 
@@ -183,8 +221,9 @@ src/aris/
   bankbot.py       pre-transaction check, decisions, audit records
   demo/            the Anu / ACC-999 walkthrough
   fl/              M1: clients, FedAvg, datasets, metrics, scorer
+                   M2: privacy.py (DP-SGD + accountant), secure_agg.py, privacy_sweep.py
 docs/              project report, phases, team split, security model
 data/raw/          CSVs (not committed)
-data/processed/    M1 metrics + weight checkpoints (not committed)
+data/processed/    M1/M2 metrics + weight checkpoints (not committed)
 tests/             hashing, attestation, schema/policy, bus, bankbot, demo, fl
 ```

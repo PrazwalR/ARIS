@@ -33,3 +33,15 @@ class TrainConfig:
     seed: int = 42
     hidden: int = 16
     max_train_rows: int | None = None  # cap ULB for a faster laptop run
+
+    # M2 -- differential privacy (DP-SGD, see aris.fl.privacy). Off by default so
+    # M1 behavior is unchanged unless a caller opts in.
+    dp_enabled: bool = False
+    max_grad_norm: float = 1.0
+    noise_multiplier: float = 1.0
+    dp_delta: float = 1e-5
+
+    # M2 -- optional secure aggregation (see aris.fl.secure_agg). Independent of
+    # dp_enabled: hides individual updates from the aggregator, but says nothing
+    # about what the aggregate model itself can leak -- that's DP's job.
+    secure_agg: bool = False

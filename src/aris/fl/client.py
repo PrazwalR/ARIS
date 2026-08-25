@@ -5,7 +5,7 @@ from typing import Any
 import numpy.typing as npt
 from flwr.client import NumPyClient
 
-from aris.fl.model import get_weights, new_model, set_weights, train_local
+from aris.fl.model import get_weights, new_model, set_weights, train_local, train_local_dp
 
 
 class BankFlowerClient(NumPyClient):
@@ -33,15 +33,28 @@ class BankFlowerClient(NumPyClient):
         self, parameters: list[npt.NDArray[Any]], config: dict[str, Any]
     ) -> tuple[list[npt.NDArray[Any]], int, dict[str, Any]]:
         set_weights(self.model, parameters)
-        loss_metrics = train_local(
-            self.model,
-            self.x,
-            self.y,
-            epochs=int(config.get("local_epochs", 1)),
-            batch_size=int(config.get("batch_size", 256)),
-            lr=float(config.get("learning_rate", 0.05)),
-            seed=self.seed + int(config.get("server_round", 0)),
-        )
+        if config.get("dp_enabled", False):
+            loss_metrics = train_local_dp(
+                self.model,
+                self.x,
+                self.y,
+                epochs=int(config.get("local_epochs", 1)),
+                batch_size=int(config.get("batch_size", 256)),
+                lr=float(config.get("learning_rate", 0.05)),
+                max_grad_norm=float(config.get("max_grad_norm", 1.0)),
+                noise_multiplier=float(config.get("noise_multiplier", 1.0)),
+                seed=self.seed + int(config.get("server_round", 0)),
+            )
+        else:
+            loss_metrics = train_local(
+                self.model,
+                self.x,
+                self.y,
+                epochs=int(config.get("local_epochs", 1)),
+                batch_size=int(config.get("batch_size", 256)),
+                lr=float(config.get("learning_rate", 0.05)),
+                seed=self.seed + int(config.get("server_round", 0)),
+            )
         metrics: dict[str, Any] = {**loss_metrics, "bank_id": self.bank_id}
         return get_weights(self.model), len(self.y), metrics
 

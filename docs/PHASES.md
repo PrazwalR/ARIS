@@ -48,19 +48,27 @@ retract another bank's flag is rejected. ✅ Met.
 
 ---
 
-## M2 — Privacy on training
+## M2 — Privacy on training (**completed**)
 
-**Lead:** AI-1. **Support:** AI-2 (utility), Backend (artifact/logging rules).
+**Lead:** AI-1. **Support:** AI-2 (utility), Backend (artifact/logging rules). **Next:** M3 (Backend lead).
 
 **Goal:** Model updates are harder to invert; measure the utility cost.
 
 **Deliverables**
 
-- DP-SGD (Opacus) or Flower DP strategy
-- Optional secure aggregation
-- Privacy–utility table (ε vs AUC)
+- DP-SGD, implemented directly in NumPy (per-example gradient clipping + Gaussian
+  noise) rather than via Opacus/PyTorch — M1 deliberately has no torch dependency,
+  and Opacus requires it. A zCDP accountant (Bun & Steinke 2016) converts
+  (noise multiplier, step count) to (epsilon, delta); it does not credit
+  subsampling amplification, so reported epsilon is a conservative upper bound.
+- Secure aggregation: pairwise-masked sum (Bonawitz et al. 2017, single-process
+  simulation), numerically identical to plain FedAvg, opt-in and independent of DP.
+- Privacy–utility table (ε vs AUC): `python -m aris.fl.privacy_sweep`.
 
-**Done when:** Training still converges with a documented ε, and we can show the accuracy drop vs M1.
+**Done when:** Training still converges with a documented ε, and we can show the
+accuracy drop vs M1. ✅ Met — synthetic dataset holds AUC 0.574–0.633 (vs 0.655
+non-DP, 0.572 M1 mean-of-local baseline) across ε from 365 down to 0.9. See the
+README M2 phase log for the full table.
 
 ---
 
@@ -133,4 +141,4 @@ retract another bank's flag is rejected. ✅ Met.
 
 ## Suggested next session
 
-**M0 and M1 are done.** Start **M2**: AI-1 DP-SGD / Flower DP; AI-2 utility (recall at FPR); Backend logging rules for updates. When a phase closes, append what shipped to the Phase log in `README.md`.
+**M0, M1, and M2 are done.** Start **M3**: Backend Kafka `risk-signals` topic + schema registry; AI-2 wires `model_version` into the schema; AI-1 hands off `score_row` from `aris.fl.scorer`. When a phase closes, append what shipped to the Phase log in `README.md`.
