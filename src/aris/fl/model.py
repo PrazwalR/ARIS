@@ -64,6 +64,16 @@ def predict_scores(
     return np.concatenate(parts, axis=0)
 
 
+def _pos_weight(y: npt.NDArray[Any]) -> float:
+    pos = max(float(y.sum()), 1.0)
+    neg = max(float(len(y) - y.sum()), 1.0)
+    return neg / pos
+
+
+def _weighted_bce_loss(p: npt.NDArray[Any], y: npt.NDArray[Any], w: npt.NDArray[Any]) -> float:
+    return float(np.mean(w * -(y * np.log(p + 1e-8) + (1 - y) * np.log(1 - p + 1e-8))))
+
+
 def train_local(
     model: FraudMLP,
     x: npt.NDArray[Any],
@@ -76,9 +86,7 @@ def train_local(
     rng = np.random.default_rng(seed)
     x = np.asarray(x, dtype=np.float32)
     y = np.asarray(y, dtype=np.float32)
-    pos = max(float(y.sum()), 1.0)
-    neg = max(float(len(y) - y.sum()), 1.0)
-    pos_weight = neg / pos
+    pos_weight = _pos_weight(y)
     n = len(y)
     last = 0.0
     for _ in range(epochs):
@@ -91,7 +99,7 @@ def train_local(
             # weighted BCE gradient on logits
             w = np.where(yb > 0.5, pos_weight, 1.0).astype(np.float32)
             grad_z = (w * (p - yb) / max(len(yb), 1)).astype(np.float32)
-            last = float(np.mean(w * -(yb * np.log(p + 1e-8) + (1 - yb) * np.log(1 - p + 1e-8))))
+            last = _weighted_bce_loss(p, yb, w)
 
             grad_w2 = h.T @ grad_z.reshape(-1, 1)
             grad_b2 = grad_z.sum(axis=0, keepdims=True)
@@ -117,6 +125,7 @@ def train_local_dp(
     max_grad_norm: float,
     noise_multiplier: float,
     seed: int = 0,
+    noise_rng: np.random.Generator | None = None,
 ) -> dict[str, float]:
     """DP-SGD variant of `train_local` (Abadi et al. 2016): every mini-batch step
     clips each example's gradient to `max_grad_norm` (L2, across all parameters
@@ -124,20 +133,31 @@ def train_local_dp(
     `noise_multiplier * max_grad_norm`. See `aris.fl.privacy` for the matching
     accountant that turns (noise_multiplier, step count) into (epsilon, delta).
 
+    `seed` controls only the example shuffle order and is reproducible by design.
+    The DP noise itself is drawn from `noise_rng` -- a fresh OS-entropy generator
+    by default, deliberately NOT derived from `seed`. The (epsilon, delta)
+    guarantee requires that noise to be unpredictable to whoever might see the
+    released update; deriving it from `seed` would make it reconstructible by
+    anything that also knows `seed` -- in this codebase, the same orchestrating
+    code that sets `TrainConfig.seed` and drives every round also aggregates the
+    resulting updates, so a seed-derived noise stream would be reconstructible by
+    exactly the party the noise is meant to protect against, silently making the
+    reported epsilon meaningless. Pass an explicit `noise_rng` only when a test
+    needs to pin a specific noise draw.
+
     Returns `dp_steps` alongside `loss` so the caller can accumulate the total
     step count actually taken (varies with shard size) for accounting.
     """
-    rng = np.random.default_rng(seed)
+    shuffle_rng = np.random.default_rng(seed)
+    noise_rng = noise_rng if noise_rng is not None else np.random.default_rng()
     x = np.asarray(x, dtype=np.float32)
     y = np.asarray(y, dtype=np.float32)
-    pos = max(float(y.sum()), 1.0)
-    neg = max(float(len(y) - y.sum()), 1.0)
-    pos_weight = neg / pos
+    pos_weight = _pos_weight(y)
     n = len(y)
     last = 0.0
     steps = 0
     for _ in range(epochs):
-        order = rng.permutation(n)
+        order = shuffle_rng.permutation(n)
         for start in range(0, n, batch_size):
             idx = order[start : start + batch_size]
             xb, yb = x[idx], y[idx]
@@ -149,7 +169,7 @@ def train_local_dp(
             # gradient before any reduction, so the average must wait until after
             # clipping and noising.
             grad_z = (w * (p - yb)).astype(np.float32)
-            last = float(np.mean(w * -(yb * np.log(p + 1e-8) + (1 - yb) * np.log(1 - p + 1e-8))))
+            last = _weighted_bce_loss(p, yb, w)
 
             per_example_grad_w2 = np.einsum("bh,bo->bho", h, grad_z.reshape(-1, 1))
             per_example_grad_b2 = grad_z.reshape(-1, 1)
@@ -167,7 +187,7 @@ def train_local_dp(
                 ],
                 max_grad_norm=max_grad_norm,
                 noise_multiplier=noise_multiplier,
-                rng=rng,
+                rng=noise_rng,
             )
 
             model.w1 -= lr * (gw1 / b).astype(np.float32)

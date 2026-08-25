@@ -78,7 +78,7 @@ Run: `python -m aris.demo.anu_transfer` · tests: `pytest` (see Quick start — 
 
 `global_beats_mean_local_auc = true`.
 
-Tests: `pytest` → **182 passed** (M0 + M1 + M2), including `test_synthetic_global_beats_mean_local_auc`. M0 Anu demo still blocks ACC-999.
+Tests: `pytest` → **188 passed** (M0 + M1 + M2), including `test_synthetic_global_beats_mean_local_auc`. M0 Anu demo still blocks ACC-999.
 
 #### How to run M1
 
@@ -122,23 +122,25 @@ Writes `data/processed/m1_metrics_<dataset>.json` and `data/processed/m1_global_
 
 **Accounting is conservative on purpose.** The accountant does not credit privacy amplification by subsampling — a correct amplification analysis needs a numerically-integrated subsampled-Gaussian RDP accountant (Abadi et al.'s "moments accountant"), and getting that wrong by *understating* epsilon is a privacy defect, not just an inaccuracy. Every mini-batch step is accounted as a full (non-amplified) Gaussian mechanism release, composed additively in zCDP. The epsilon reported is therefore always a valid upper bound, looser than what a full accountant would report for the same noise multiplier.
 
+**The DP noise itself is sourced from OS entropy, not from the run's reproducibility seed.** Every other random draw in this demo (shard shuffling, model init, secure-agg masks) is deliberately seeded from `TrainConfig.seed` so results are reproducible. The Gaussian noise `clip_and_noise_gradients` adds is the one exception, and has to be: an adversarial audit of this module (see below) found that the original implementation *did* derive it from `seed`, which is reconstructible by the same orchestrating code that also aggregates client updates — making the noise predictable to exactly the party the accountant's epsilon is supposed to protect against, and the reported epsilon meaningless. `train_local_dp` now draws noise from a fresh, unseeded generator by default; only the shuffle order stays reproducible. One consequence: re-running a DP-enabled experiment with the same seed now produces a *different* trained model each time (though statistically similar — see the table below), unlike every other seeded part of this repo.
+
 **Secure aggregation is a different protection, not a substitute for DP.** Masking hides each bank's individual update from the aggregator; it says nothing about what the resulting *aggregate* model can leak about the union of all banks' data. `secure_fedavg` is numerically identical to plain FedAvg (masks cancel exactly — verified in `tests/test_fl_secure_agg.py`), so it costs nothing in accuracy; it can be turned on independently of `dp_enabled`.
 
-#### Verified privacy–utility table (synthetic, 5 banks, 8 rounds × 4 local epochs, `max_grad_norm=5.0`, `delta=1e-5`)
+#### Verified privacy–utility table (synthetic, 5 banks, 8 rounds × 4 local epochs, `max_grad_norm=5.0`, `delta=1e-5`, one run per row)
 
 | noise_multiplier | epsilon (upper bound) | Global AUC |
 | --- | --- | --- |
 | — (M1 baseline, no DP) | — | 0.655 |
-| 0.5 | 364.6 | 0.633 |
-| 1.0 | 118.3 | 0.632 |
-| 2.0 | 43.1 | 0.631 |
-| 4.0 | 17.6 | 0.628 |
-| 8.0 | 7.8 | 0.621 |
-| 15.0 | 3.9 | 0.612 |
-| 30.0 | 1.9 | 0.594 |
-| 60.0 | 0.9 | 0.574 |
+| 0.5 | 364.6 | 0.634 |
+| 1.0 | 118.3 | 0.635 |
+| 2.0 | 43.1 | 0.632 |
+| 4.0 | 17.6 | 0.633 |
+| 8.0 | 7.8 | 0.629 |
+| 15.0 | 3.9 | 0.638 |
+| 30.0 | 1.9 | 0.613 |
+| 60.0 | 0.9 | 0.556 |
 
-Even at single-digit epsilon the DP model still clears M1's mean-of-local-models baseline (0.572) — the federated signal survives the noise. Tests: `pytest` → **182 passed** (M0 + M1 + M2), including convergence and epsilon-monotonicity checks in `tests/test_fl_m2.py`.
+Since the noise is now genuinely random rather than seed-derived, individual rows fluctuate a little run to run (across 20 repeated runs at `noise_multiplier=8.0`, AUC stayed within 0.627–0.643, well clear of both M1's mean-of-local baseline and the 60.0 tail) — the trend, not any single row, is the result: AUC degrades gracefully as epsilon shrinks and stays clearly better than a coin flip even at sub-1 epsilon. Tests: `pytest` → **188 passed** (M0 + M1 + M2), including convergence, epsilon-monotonicity, and RNG-separation checks in `tests/test_fl_m2.py` / `tests/test_fl_privacy.py`.
 
 #### How to run M2
 

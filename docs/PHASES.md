@@ -65,9 +65,18 @@ retract another bank's flag is rejected. ✅ Met.
   simulation), numerically identical to plain FedAvg, opt-in and independent of DP.
 - Privacy–utility table (ε vs AUC): `python -m aris.fl.privacy_sweep`.
 
+**Post-completion audit fix:** an adversarial review of the first implementation
+found the DP noise was seeded from `TrainConfig.seed` — the same value the
+orchestrating/aggregating code already holds, making the noise reconstructible
+by exactly the party the epsilon guarantee is meant to protect against, and the
+reported epsilon meaningless. Fixed: `train_local_dp` now sources noise from OS
+entropy by default; only example-shuffle order stays seed-reproducible. See the
+README M2 phase log for the corrected numbers and full explanation.
+
 **Done when:** Training still converges with a documented ε, and we can show the
-accuracy drop vs M1. ✅ Met — synthetic dataset holds AUC 0.574–0.633 (vs 0.655
-non-DP, 0.572 M1 mean-of-local baseline) across ε from 365 down to 0.9. See the
+accuracy drop vs M1. ✅ Met — synthetic dataset holds AUC in the 0.55–0.64 range
+(vs 0.655 non-DP, 0.572 M1 mean-of-local baseline) across ε from 365 down to 0.9,
+with individual runs now genuinely random rather than seed-derived. See the
 README M2 phase log for the full table.
 
 ---

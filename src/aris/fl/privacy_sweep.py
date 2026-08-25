@@ -13,6 +13,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import tempfile
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -36,19 +39,7 @@ def run_sweep(
     base_cfg: TrainConfig | None = None,
 ) -> dict[str, Any]:
     base_cfg = base_cfg or TrainConfig()
-    baseline_cfg = TrainConfig(
-        num_banks=base_cfg.num_banks,
-        rounds=base_cfg.rounds,
-        local_epochs=base_cfg.local_epochs,
-        batch_size=base_cfg.batch_size,
-        learning_rate=base_cfg.learning_rate,
-        holdout_frac=base_cfg.holdout_frac,
-        dirichlet_alpha=base_cfg.dirichlet_alpha,
-        seed=base_cfg.seed,
-        hidden=base_cfg.hidden,
-        max_train_rows=base_cfg.max_train_rows,
-        dp_enabled=False,
-    )
+    baseline_cfg = replace(base_cfg, dp_enabled=False)
     baseline = run_experiment(dataset, cfg=baseline_cfg)
 
     rows: list[dict[str, Any]] = [
@@ -61,17 +52,8 @@ def run_sweep(
         }
     ]
     for nm in noise_multipliers:
-        cfg = TrainConfig(
-            num_banks=base_cfg.num_banks,
-            rounds=base_cfg.rounds,
-            local_epochs=base_cfg.local_epochs,
-            batch_size=base_cfg.batch_size,
-            learning_rate=base_cfg.learning_rate,
-            holdout_frac=base_cfg.holdout_frac,
-            dirichlet_alpha=base_cfg.dirichlet_alpha,
-            seed=base_cfg.seed,
-            hidden=base_cfg.hidden,
-            max_train_rows=base_cfg.max_train_rows,
+        cfg = replace(
+            base_cfg,
             dp_enabled=True,
             noise_multiplier=nm,
             max_grad_norm=max_grad_norm,
@@ -99,8 +81,24 @@ def run_sweep(
 
 
 def write_sweep(sweep: dict[str, Any], path: Path) -> None:
+    """Write the JSON report atomically (see `aris.fl.run.write_report`): a failure
+    partway through the write must never leave a truncated/corrupt file at `path`.
+    Note this is only called once, after every noise multiplier in the sweep has
+    already run to completion -- if any single `run_experiment` call raises, that
+    exception propagates out of `run_sweep` before this function is ever reached,
+    so a mid-sweep failure cannot produce a report that looks complete but is
+    silently missing rows either.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(as_plain_floats(sweep), indent=2), encoding="utf-8")
+    payload = json.dumps(as_plain_floats(sweep), indent=2)
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(payload)
+        os.replace(tmp_name, path)
+    except BaseException:
+        Path(tmp_name).unlink(missing_ok=True)
+        raise
 
 
 def main(argv: list[str] | None = None) -> int:

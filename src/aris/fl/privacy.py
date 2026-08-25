@@ -18,6 +18,14 @@ as a full (non-subsampled) Gaussian mechanism release is simple to verify and ca
 only overstate the true privacy loss, never hide it. The epsilon this module
 reports is therefore always a valid upper bound, at the cost of being looser than
 what a full accountant would report for the same noise multiplier.
+
+This accounting is only meaningful if the noise `clip_and_noise_gradients` adds
+is actually unpredictable to whoever might see the released update -- an
+accountant cannot detect noise that was technically added but is reconstructible
+from a known seed. That sourcing is `aris.fl.model.train_local_dp`'s
+responsibility (it draws from OS entropy by default, not from its reproducible
+`seed` parameter); this module only computes what a given noise_multiplier is
+worth *assuming* the noise was genuinely random.
 """
 
 from __future__ import annotations
@@ -91,6 +99,8 @@ def clip_and_noise_gradients(
         raise ValueError("per_example_grads must be non-empty")
     if max_grad_norm <= 0:
         raise ValueError("max_grad_norm must be positive")
+    if noise_multiplier < 0:
+        raise ValueError("noise_multiplier must be non-negative")
 
     batch = per_example_grads[0].shape[0]
     sq_sums = np.zeros(batch, dtype=np.float64)

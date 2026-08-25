@@ -52,11 +52,33 @@ def secure_sum(
     and computes its own sum from that; `true_sum` is returned for verification
     (tests, and honest demonstration here) and is not something a real
     aggregator would have independent access to.
+
+    With a single client there are no pairs to mask against, so `masked[0] ==
+    values[0]` exactly -- correct behavior, but zero protection, since there is
+    no peer to hide from. ARIS's cross-bank model only makes sense with multiple
+    banks, so this is not separately guarded against here.
     """
     n = len(values)
     if n == 0:
         raise ValueError("values must be non-empty")
     n_params = len(values[0])
+    ref_shapes = [arr.shape for arr in values[0]]
+    for i in range(1, n):
+        if len(values[i]) != n_params:
+            raise ValueError(
+                f"client {i} has {len(values[i])} parameter arrays, expected {n_params} "
+                f"(from client 0). All clients must submit the same model structure -- "
+                "a mismatch here would otherwise silently drop the extra/missing "
+                "parameter(s) from the aggregate instead of raising."
+            )
+        for p, (arr, ref_shape) in enumerate(zip(values[i], ref_shapes, strict=True)):
+            if arr.shape != ref_shape:
+                raise ValueError(
+                    f"client {i} parameter {p} has shape {arr.shape}, expected "
+                    f"{ref_shape} (from client 0). Mismatched shapes can silently "
+                    "broadcast into a wrong aggregate instead of failing clearly, and "
+                    "break the pairwise-mask cancellation guarantee."
+                )
 
     masked = [[arr.copy() for arr in client_vals] for client_vals in values]
     for i in range(n):

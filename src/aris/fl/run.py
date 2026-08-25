@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -207,15 +209,38 @@ def _federated_train(
             new_w, n, fit_metrics = client.fit(weights, config)
             updates.append((new_w, n))
             if cfg.dp_enabled:
-                dp_steps_per_client[client.bank_id] += int(fit_metrics.get("dp_steps", 0))
+                if "dp_steps" not in fit_metrics:
+                    # Never default this to 0: it silently understates
+                    # dp_steps_per_client, which silently understates the reported
+                    # epsilon -- a wrong "this run is more private than it is"
+                    # result is worse than a crash here.
+                    raise KeyError(
+                        f"dp_enabled=True but fit() for {client.bank_id!r} returned no "
+                        "'dp_steps' metric -- train_local_dp must always report it. "
+                        "Refusing to silently default to 0 and understate epsilon."
+                    )
+                dp_steps_per_client[client.bank_id] += int(fit_metrics["dp_steps"])
         weights = secure_fedavg(updates, seed=cfg.seed + rnd) if cfg.secure_agg else fedavg(updates)
         logs.append({"round": rnd, "clients": len(updates)})
     return weights, logs, dp_steps_per_client
 
 
 def write_report(report: dict[str, Any], path: Path) -> None:
+    """Write the JSON report atomically: a failure partway through (disk full,
+    process killed) must never leave a truncated/corrupt file at `path`, and must
+    never leave a stale-but-complete-looking old report silently overwritten by a
+    half-written new one.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(as_plain_floats(report), indent=2), encoding="utf-8")
+    payload = json.dumps(as_plain_floats(report), indent=2)
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(payload)
+        os.replace(tmp_name, path)
+    except BaseException:
+        Path(tmp_name).unlink(missing_ok=True)
+        raise
 
 
 def main(argv: list[str] | None = None) -> int:

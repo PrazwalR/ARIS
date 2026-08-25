@@ -45,3 +45,29 @@ class TrainConfig:
     # dp_enabled: hides individual updates from the aggregator, but says nothing
     # about what the aggregate model itself can leak -- that's DP's job.
     secure_agg: bool = False
+
+    def __post_init__(self) -> None:
+        # Validated here, at construction time, rather than left to fail deep
+        # inside training or the epsilon accountant: a bad value below doesn't
+        # just crash eventually, it can run a full (expensive) training loop
+        # first and even persist a checkpoint before anything complains -- or,
+        # worse, never raise at all and silently produce a misleadingly clean
+        # report (see rounds/local_epochs below).
+        if self.rounds < 1:
+            raise ValueError(f"rounds must be >= 1, got {self.rounds}")
+        if self.local_epochs < 1:
+            raise ValueError(f"local_epochs must be >= 1, got {self.local_epochs}")
+        if self.dp_enabled:
+            if self.noise_multiplier <= 0:
+                raise ValueError(
+                    "noise_multiplier must be positive when dp_enabled=True, got "
+                    f"{self.noise_multiplier}. A zero or negative value adds no (or "
+                    "negative) Gaussian noise -- clip_and_noise_gradients would run "
+                    "with unprotected clipped gradients while the report still claims "
+                    "dp_enabled=True, and the accountant only notices at report time, "
+                    "after training already happened."
+                )
+            if self.max_grad_norm <= 0:
+                raise ValueError(f"max_grad_norm must be positive, got {self.max_grad_norm}")
+            if not (0.0 < self.dp_delta < 1.0):
+                raise ValueError(f"dp_delta must be in (0, 1), got {self.dp_delta}")
