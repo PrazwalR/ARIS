@@ -125,6 +125,15 @@ class AuditSink(ABC):
     @abstractmethod
     def record(self, entry: AuditRecord) -> None: ...
 
+    @abstractmethod
+    def get(self, audit_ref: str) -> AuditRecord | None:
+        """Retrieve one record by the opaque reference BankBot handed the caller.
+
+        The evidence behind a decision is only reachable through this method, not
+        through anything the customer-facing response carries (see
+        ``BankBotDecision``) -- an analyst path calls this, not the transfer path.
+        """
+
 
 class InMemoryAuditLog(AuditSink):
     """Bounded in-process audit log for the demo and tests.
@@ -137,19 +146,30 @@ class InMemoryAuditLog(AuditSink):
         if capacity < 1:
             raise ValueError("capacity must be positive")
         self._entries: deque[AuditRecord] = deque(maxlen=capacity)
+        # transfer_id -> record, kept in sync with _entries so get() is O(1)
+        # instead of a linear scan over every record this sink has ever held.
+        self._by_ref: dict[str, AuditRecord] = {}
         self._dropped = 0
 
     def record(self, entry: AuditRecord) -> None:
         # Losing the record of a blocked fraud attempt to a flood of cheap
         # allowed probes is evidence destruction, so a drop is always counted and
         # always surfaced. A durable sink must not drop at all.
+        evicted: AuditRecord | None = None
         if len(self._entries) == self._entries.maxlen:
             self._dropped += 1
+            evicted = self._entries[0]  # deque.append() below silently pops this
             logger.warning(
                 "audit log at capacity; discarded oldest record (%d dropped total)",
                 self._dropped,
             )
         self._entries.append(entry)
+        if evicted is not None:
+            del self._by_ref[evicted.transfer_id]
+        self._by_ref[entry.transfer_id] = entry
+
+    def get(self, audit_ref: str) -> AuditRecord | None:
+        return self._by_ref.get(audit_ref)
 
     @property
     def dropped(self) -> int:

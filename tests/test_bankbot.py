@@ -228,6 +228,29 @@ class TestAuditTrail:
         assert entry.reason_codes == ("high_velocity", "new_beneficiary")
         assert entry.decided_at.tzinfo is not None
 
+    def test_get_retrieves_by_audit_ref(self, empty_bus):
+        audit = InMemoryAuditLog()
+        bot = BankBot(empty_bus, audit=audit)
+        decision = bot.pre_transaction(request(transfer_id="txn-lookup-1"))
+        entry = audit.get(decision.audit_ref)
+        assert entry is not None
+        assert entry.transfer_id == "txn-lookup-1"
+
+    def test_get_returns_none_for_unknown_ref(self, empty_bus):
+        audit = InMemoryAuditLog()
+        BankBot(empty_bus, audit=audit).pre_transaction(request())
+        assert audit.get("never-issued") is None
+
+    def test_get_forgets_evicted_records(self, empty_bus):
+        audit = InMemoryAuditLog(capacity=2)
+        bot = BankBot(empty_bus, audit=audit)
+        bot.pre_transaction(request(transfer_id="txn-aaaaaaaa"))
+        bot.pre_transaction(request(transfer_id="txn-bbbbbbbb"))
+        bot.pre_transaction(request(transfer_id="txn-cccccccc"))  # evicts txn-a
+        assert audit.get("txn-aaaaaaaa") is None
+        assert audit.get("txn-bbbbbbbb") is not None
+        assert audit.get("txn-cccccccc") is not None
+
     def test_record_captures_the_policy_that_produced_it(self, flagged_bus):
         """A past decision must be explainable under the thresholds then in force."""
         audit = InMemoryAuditLog()
