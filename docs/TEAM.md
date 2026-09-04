@@ -53,7 +53,11 @@ Shipped: Flower `NumPyClient` per bank, Flower FedAvg aggregator, ULB + syntheti
 
 ---
 
-### M3 Shared Risk-Signal Bus (Kafka)
+### M3 Shared Risk-Signal Bus (Kafka) — **done**
+
+Shipped: `KafkaRiskBus` (same `RiskBus` interface `InMemoryRiskBus` implements), a
+compacted `risk-signals` topic keyed `risk_id:bank`, Karapace schema registry over
+plain REST (no `confluent-kafka`), `docker-compose.yml` for local dev.
 
 | Person | Tasks |
 | --- | --- |
@@ -69,7 +73,10 @@ consortium keyring before storing. `lookup` returns a `LookupResult` that distin
 
 ---
 
-### M4 BankBot API
+### M4 BankBot API — **done**
+
+Shipped: `POST /transfers`, `GET /audit/{ref}` (admin-key gated), `GET /health`
+(`src/aris/api/`). Thin over `aris.bankbot.BankBot` -- no new decision logic.
 
 | Person | Tasks |
 | --- | --- |
@@ -79,7 +86,11 @@ consortium keyring before storing. `lookup` returns a `LookupResult` that distin
 
 ---
 
-### M5 Explainability & MLOps
+### M5 Explainability & MLOps — **done**
+
+Shipped: `FraudExplainer` (SHAP → `reason_codes`, `src/aris/fl/explain.py`),
+`check_drift` (Evidently K-S test, `drift.py`), `ModelRegistry` +
+`should_rollback` (`registry.py`). Prometheus/Grafana not built (M6+).
 
 | Person | Tasks |
 | --- | --- |
@@ -105,7 +116,7 @@ consortium keyring before storing. `lookup` returns a `LookupResult` that distin
 | --- | --- |
 | `src/aris/fl/` | AI-1 |
 | `src/aris/` scoring / explain (to be added as `scorer.py`, `explain.py`) | AI-2 |
-| `src/aris/bus.py`, `src/aris/bankbot.py`, `src/aris/hashing.py`, `src/aris/attestation.py`, future `api/` | Backend |
+| `src/aris/bus.py`, `src/aris/kafka_bus.py`, `src/aris/schema_registry.py`, `src/aris/bankbot.py`, `src/aris/hashing.py`, `src/aris/attestation.py`, `src/aris/api/` | Backend |
 | `src/aris/schema.py` | **All — change only with the group** |
 | `docs/PROJECT.md` | Shared report |
 | `README.md` Phase log | Whoever closed the phase (must update) |

@@ -31,11 +31,21 @@ ml = [
     "scikit-learn>=1.4",
     "flwr>=1.9",
 ]
-# M4 -- BankBot HTTP API. Not imported by any code yet.
+# M3 -- Kafka-backed risk bus. Pure-Python client (no librdkafka/C dependency);
+# talks to Schema Registry over its plain REST API instead of confluent-kafka.
+kafka = [
+    "kafka-python>=2.0",
+]
+# M4 -- BankBot HTTP API.
 api = [
     "fastapi>=0.111",
     "uvicorn[standard]>=0.30",
     "httpx>=0.27",
+]
+# M5 -- explainability + drift monitoring.
+xai = [
+    "shap>=0.45",
+    "evidently>=0.4",
 ]
 
 [tool.setuptools.packages.find]
@@ -68,7 +78,7 @@ strict = true
 files = ["src"]
 
 [[tool.mypy.overrides]]
-module = ["flwr.*", "sklearn.*", "pandas.*"]
+module = ["flwr.*", "sklearn.*", "pandas.*", "kafka.*", "shap.*", "evidently.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

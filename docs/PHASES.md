@@ -81,54 +81,98 @@ README M2 phase log for the full table.
 
 ---
 
-## M3 — Shared Risk-Signal Bus (Kafka)
+## M3 — Shared Risk-Signal Bus (Kafka) (**completed**)
 
-**Lead:** Backend. **Support:** AI-2 (model → `RiskSignal`), AI-1 (`model_version`).
+**Lead:** Backend. **Support:** AI-2 (model → `RiskSignal`), AI-1 (`model_version`). **Next:** M4 (Backend lead).
 
 **Goal:** Replace the in-memory bus with Kafka `risk-signals`, schema, TTL.
 
 **Deliverables**
 
-- `docker-compose` Kafka (+ Schema Registry)
-- Avro/JSON schema matching the JSON in the project report
-- Publisher from a bank “fraud scorer”
-- Query/lookup service (compacted topic or sidecar store keyed by `risk_id`)
-- Auth placeholders: mTLS / ACL notes (real PKI later)
+- `docker-compose` Kafka (KRaft, `apache/kafka`) + Schema Registry (Karapace --
+  Confluent-API-compatible, chosen over `confluentinc/cp-schema-registry` for
+  image size; the wire protocol is identical).
+- JSON Schema (from `RiskSignal.model_json_schema()`) registered with the
+  registry over its plain REST API -- `kafka-python` stays pure-Python, no
+  `confluent-kafka`/librdkafka dependency.
+- `KafkaRiskBus.publish()`: a bank's publisher, wired straight onto the same
+  `RiskBus` interface `InMemoryRiskBus` implements.
+- Query/lookup service: each `KafkaRiskBus` instance's background consumer
+  thread builds a local materialized view (an internal `InMemoryRiskBus`) from
+  the compacted topic; `lookup()` reads that, never the network.
+- Auth placeholders: no SASL/mTLS/ACLs in the local-dev compose file by design
+  (see `docs/SECURITY.md` §3.8 for the concrete `kafka-acls.sh` a real
+  deployment needs) -- message-level Ed25519 verification still applies on
+  every consumed record regardless, independent of transport auth.
 
-**Done when:** Bank B can publish and Bank A can consume the same `risk_id` across processes.
+**Done when:** Bank B can publish and Bank A can consume the same `risk_id`
+across processes. ✅ Met -- verified against a live broker: a second
+`KafkaRiskBus` instance, sharing nothing but the broker/registry, sees Bank B's
+signal via its own `lookup()` once its consumer thread catches up. See the
+README M3 phase log.
 
 ---
 
-## M4 — BankBot in the transfer path
+## M4 — BankBot in the transfer path (**completed**)
 
-**Lead:** Backend. **Support:** AI-2 (reason codes), AI-1 (local-model fallback).
+**Lead:** Backend. **Support:** AI-2 (reason codes), AI-1 (local-model fallback). **Next:** M5 (AI-2 lead).
 
 **Goal:** Production-shaped API: parse intent → hash → query bus → policy → user message.
 
 **Deliverables**
 
-- FastAPI (or CLI) “Send ₹5,000 to ACC-999”
-- Thresholds configurable (defaults: block at score >= 85, step-up at >= 50)
-- Step-up auth stub for medium risk
-- Audit log: decision, score, reason codes, model version
+- FastAPI `POST /transfers` ("Send ₹5,000 to ACC-999") -- `src/aris/api/app.py`,
+  a thin wrapper: every decision still comes from `aris.bankbot.BankBot`.
+- Thresholds configurable (defaults: block at score >= 85, step-up at >= 50) --
+  via `ARIS_API_BLOCK_AT` / `ARIS_API_STEP_UP_AT` / etc. (`src/aris/api/config.py`).
+- Step-up auth stub for medium risk -- `POST /transfers` reports
+  `step_up_required: true` honestly and does not simulate completing a
+  challenge flow a real deployment already owns.
+- Audit log: decision, score, reason codes, model version -- already captured
+  by M0's `AuditRecord`; M4 adds the missing piece, an authenticated retrieval
+  path (`GET /audit/{audit_ref}`, admin-key gated, `hmac.compare_digest`).
 
 **Done when:** The Anu example works over HTTP with the Kafka bus from M3.
+✅ Met -- `tests/test_api_kafka.py` runs the same blocked-transfer scenario
+through `POST /transfers` against a live `KafkaRiskBus`, including a second
+bus/app instance standing in for Bank A's own process. See the README M4
+phase log.
 
 ---
 
-## M5 — Explainability and MLOps
+## M5 — Explainability and MLOps (**completed**)
 
-**Lead:** AI-2. **Support:** AI-1 (registry/rollback), Backend (metrics + audit fields).
+**Lead:** AI-2. **Support:** AI-1 (registry/rollback), Backend (metrics + audit fields). **Next:** M6+ (AI-1 lead).
 
 **Goal:** Auditable “why” plus drift/rollback.
 
 **Deliverables**
 
-- SHAP or LIME on local scoring
-- Map feature attributions → reason codes (`new_beneficiary`, `high_velocity`, …)
-- Evidently / Prometheus metrics; model version + rollback
+- SHAP on local scoring -- `src/aris/fl/explain.py::FraudExplainer`, permutation
+  SHAP over `FraudScorer` (model-agnostic: the scorer wraps a custom NumPy MLP,
+  not a SHAP-native model type).
+- Map feature attributions → reason codes -- via an explicit, caller-supplied
+  map, not an invented one: neither dataset this repo trains on has
+  semantically meaningful feature names (synthetic is anonymous by
+  construction; ULB is PCA-anonymized for the same privacy reasons the rest of
+  this project cares about), so an unmapped top feature reports the honest
+  thing (which feature, how much it moved the score) via a generic fallback
+  code instead of a fabricated domain claim.
+- Evidently metrics -- `src/aris/fl/drift.py::check_drift`, Kolmogorov-Smirnov
+  drift per feature (`DataDriftPreset`), reference vs. current batch.
+  (Prometheus/Grafana endpoints not built -- see M6+.)
+- Model version + rollback -- `src/aris/fl/registry.py::ModelRegistry`:
+  versioned checkpoints, an explicit active pointer, an atomically-written
+  manifest, and `should_rollback(candidate, active)` criteria (regression
+  beyond a tolerance on a named metric, e.g. AUC).
 
 **Done when:** A blocked transfer has reason codes a bank analyst can defend.
+✅ Met -- verified against ground truth, not just "runs without crashing":
+`make_synthetic`'s fraud direction is known by construction, and
+`FraudExplainer` correctly identifies the true driving feature as the dominant
+SHAP contributor (`tests/test_fl_explain.py`); an end-to-end test traces that
+attribution through `RiskSignal`'s own token validator to an actual BankBot
+`BLOCK` decision. See the README M5 phase log.
 
 ---
 
@@ -150,4 +194,4 @@ README M2 phase log for the full table.
 
 ## Suggested next session
 
-**M0, M1, and M2 are done.** Start **M3**: Backend Kafka `risk-signals` topic + schema registry; AI-2 wires `model_version` into the schema; AI-1 hands off `score_row` from `aris.fl.scorer`. When a phase closes, append what shipped to the Phase log in `README.md`.
+**M0–M5 are done.** Start **M6+**: AI-1 robust aggregation (Krum/median) and more banks; AI-2 on-prem graph/velocity features; Backend bus load testing and the mTLS/ACL hardening flagged in `docs/SECURITY.md` §3.8. When a phase closes, append what shipped to the Phase log in `README.md`.

@@ -117,6 +117,34 @@ falls to off-the-shelf tooling.
 but it accumulates a ready-made mapping for every account a bank's customers pay. Needs
 encryption at rest, a named investigations role, and a retention limit.
 
+### 3.8 The Kafka bus (M3) has no transport authentication — *high*
+
+`docker-compose.yml`'s broker and Schema Registry run `PLAINTEXT`, with no SASL, no
+mTLS, and no ACLs. `KafkaRiskBus` still enforces the same Ed25519 signature check as
+`InMemoryRiskBus` — both at publish time and again when a background thread consumes
+each record, so a message that does not verify is rejected regardless of who wrote it
+to the topic — but that is *message* authenticity, not *transport* access control.
+Today, anything that can reach the broker can produce arbitrary bytes to
+`risk-signals` (they will be rejected on consume if unsigned or wrongly signed, but can
+still flood the topic or read every record, including from banks whose messages they
+are not a party to) and can read the Schema Registry's subjects freely.
+
+A real deployment needs both layers, not one instead of the other:
+
+- **mTLS** on the broker listener, so only certificate-holding members can connect at
+  all — this is what keeps an unauthenticated party from reading the compacted topic's
+  full history in the first place, something the signature check cannot prevent since
+  it only governs whether a *write* gets accepted, not who can *read*.
+- **Per-principal ACLs** (`kafka-acls.sh --add --allow-principal User:BANK-B --operation
+  Write --topic risk-signals`, one per member, plus a read-only ACL for `Describe` on
+  the topic) so a compromised bank's credentials can be revoked at the broker without
+  waiting for a keyring update to propagate.
+
+This is the same shape of gap as the OPRF item in §3.1: signing already covers message
+integrity even against a dishonest transport, the way HMAC already produces a
+pseudonymous ID even without an OPRF. Transport-level access control is the layer on
+top that limits blast radius and enables clean revocation, and it does not exist yet.
+
 ## 4. Priority order
 
 | # | Change | Addresses | Effort |
@@ -127,6 +155,7 @@ encryption at rest, a named investigations role, and a retention limit.
 | 4 | Quantise timestamp, round confidence | 3.5 | 1 h |
 | 5 | OPRF-derived `risk_id` | 3.1 | 3–5 d |
 | 6 | HSM-resident key | 3.6 | 2–3 d |
+| 7 | mTLS + per-bank Kafka ACLs | 3.8 | 1–2 d |
 
 Items 1–4 are independent of the OPRF and worth doing regardless. If item 5 is out of
 reach, HSM-resident HMAC plus daily epochs gets most of the benefit with no new

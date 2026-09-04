@@ -8,10 +8,12 @@ ARIS (AI-Agent Risk Integration System) is a banking-security project that solve
 
 **Implementation status.** This document describes the full ARIS design. Built
 today: the risk-signal layer (pseudonymous IDs, signed publication, the bus, the
-policy engine, BankBot's pre-transaction check — M0), and the federated learning
-layer of §3.1 including DP-SGD and secure aggregation (M1, M2). Not yet built:
-Kafka (M3), the BankBot HTTP API (M4), and explainability/MLOps (M5+). See
-[PHASES.md](PHASES.md) for the full schedule.
+policy engine, BankBot's pre-transaction check — M0), the federated learning
+layer of §3.1 including DP-SGD and secure aggregation (M1, M2), the
+Kafka-backed bus of §3.2 (M3), BankBot's HTTP surface (§3.3, M4), and
+explainability/drift/model-registry (M5, `src/aris/fl/explain.py`,
+`drift.py`, `registry.py`). Not yet built: M6+ (more banks, graph features,
+robust aggregation). See [PHASES.md](PHASES.md) for the full schedule.
 
 ## 2. Problem Statement
 
@@ -54,7 +56,7 @@ No account numbers, transaction IDs, or customer data leave the bank in this lay
 
 ### 3.2 Shared Risk-Signal Bus (Cross-Bank Risk Sharing)
 
-When a bank’s model flags a receiver account as high risk, the bank publishes a risk signal to a secure message bus (e.g. Apache Kafka topic `risk-signals`).
+When a bank’s model flags a receiver account as high risk, the bank publishes a risk signal to a secure message bus — the Apache Kafka topic `risk-signals` (`src/aris/kafka_bus.py`, M3), with an in-memory implementation of the same interface for tests and the demo.
 
 To protect privacy, the bus does not store plain account numbers. Instead it uses a hashed risk ID.
 
@@ -113,10 +115,14 @@ Example risk-signal message:
 }
 ```
 
-Transport access is restricted using mTLS, OAuth2/OIDC, and per-topic ACLs — planned
-for M3, not yet implemented. Those controls protect the channel; the Ed25519 signature
-above protects the message, which is what makes the per-bank partitioning meaningful
-even against the operator running the channel.
+Transport access via mTLS, OAuth2/OIDC, and per-topic ACLs is **not yet
+implemented** — the local-dev `docker-compose.yml` runs Kafka and the schema
+registry over plain, unauthenticated connections (see [SECURITY.md](SECURITY.md)
+§3.8 for the concrete gap and the ACL commands a real deployment needs). Those
+controls protect the channel; the Ed25519 signature above protects the message
+regardless of transport, which is why every consumed record is re-verified
+against the keyring on the way into a reader's local view, not just checked
+once at the original publish call.
 
 **Outcome:** All participating banks can see which accounts are currently risky without
 sharing raw transaction data, and without any account number reaching the bus — subject
@@ -124,6 +130,11 @@ to the scope note above: a member bank holding the consortium key can still reco
 account numbers from the IDs.
 
 ### 3.3 AI Banking Assistant (BankBot) Layer
+
+> **Status: built (M4).** `src/aris/api/app.py` exposes the flow below over
+> HTTP (`POST /transfers`) against either bus from §3.2. The logic itself
+> predates M4 (`aris.bankbot.BankBot`, M0) -- M4 is the transport, not new
+> decision logic.
 
 BankBot is an AI assistant integrated into the bank’s transaction flow (similar in spirit to Erica, Eno, EVA, iPal, but with added cross-bank risk awareness).
 
@@ -159,6 +170,16 @@ transfer form into a probing oracle: a fraudster could test accounts through the
 assistant to learn which of their mule accounts the network has burned, and tune their
 behaviour just under the threshold.
 
+**The evidence is reachable, just not from the transfer response.** `GET
+/audit/{audit_ref}` (M4) is the authenticated path an analyst uses instead --
+gated on a shared admin key checked with `hmac.compare_digest`, and disabled
+(503, not "auth optional") when no key is configured.
+
+**Step-up auth is honestly incomplete.** A `STEP_UP` decision comes back over
+HTTP as `step_up_required: true`; M4 does not simulate an OTP/challenge flow,
+because a real deployment already has one and a fake one here would be
+indistinguishable from a real security control without being one.
+
 **Outcome:** Users are protected from sending money to accounts that have been flagged as risky by any participating bank.
 
 ## 4. End-to-End Example (Hashed IDs)
@@ -190,12 +211,13 @@ BankBot replies: *This transfer looks risky. The receiver account has been flagg
 The M0 code depends only on `pydantic` and `cryptography`. M1/M2 (`pip install
 -e ".[ml]"`) add `numpy`, `pandas`, `scikit-learn`, `flwr` — **no torch/Opacus**:
 DP-SGD (§3.1, M2) is implemented directly against the NumPy MLP rather than
-pulled in as a PyTorch dependency. Everything below M3 onward remains planned,
-not a current dependency.
+pulled in as a PyTorch dependency. M3 (`pip install -e ".[kafka]"`) adds
+`kafka-python` — no `confluent-kafka`/librdkafka either, for the same reason.
+Everything below M4 onward remains planned, not a current dependency.
 
 **Datasets:** IEEE-CIS Fraud Detection (Kaggle), ULB Credit Card Fraud, PaySim — all wired up in `aris.fl.datasets`; ULB is verified end-to-end (README M1 phase log), PaySim/IEEE-CIS have loaders but need a manual Kaggle download to exercise.
 
-**Bus (planned, M3):** Apache Kafka, Schema Registry. **XAI / MLOps (planned, M5+):** SHAP, LIME, MLflow, Prometheus+Grafana, Evidently AI.
+**Bus:** Apache Kafka + Karapace Schema Registry, both real (M3, `docker-compose.yml`) — see the README M3 phase log. **XAI / MLOps:** SHAP + Evidently, both real (M5, `pip install -e ".[xai]"`) — see the README M5 phase log. **Not built:** LIME, MLflow, Prometheus+Grafana (M6+).
 
 **References:** Federated-Fraud-Detection-System (Flower + RF), federated_credit_card_fraud (Flower + PyTorch + Streamlit), NVFlare `hello-dp`.
 

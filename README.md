@@ -4,7 +4,7 @@
 
 The goal: banks collaboratively train a fraud model with federated learning (no raw transactions leave the bank), and when a receiver account is high risk they publish only a **pseudonymous risk ID + score** to a shared bus. BankBot checks that bus before a transfer and can pause or block it—even if another bank first saw the fraud.
 
-**Status: M0–M2 are built and tested — the bus, the policy, BankBot, federated learning, and DP-SGD privacy on training. See the phase table.**
+**Status: M0–M5 are built and tested — the bus, the policy, BankBot (now over HTTP), federated learning, DP-SGD privacy on training, the Kafka-backed risk bus, and SHAP explainability + drift monitoring + model registry. See the phase table.**
 
 **Team:** 2 AI · 1 backend — see [`docs/TEAM.md`](docs/TEAM.md). After each phase, update the **Phase log** below.
 
@@ -15,10 +15,10 @@ The goal: banks collaboratively train a fraud model with federated learning (no 
 | **M0** | Repo, keyed `risk_id` (HMAC-SHA256), signed signals (Ed25519), policy, in-memory bus, BankBot demo | Shared | **Done** |
 | **M1** | Flower FL with 3–5 simulated banks (ULB / PaySim / IEEE-CIS) | AI-1 | **Done** |
 | **M2** | Differential privacy (DP-SGD) + secure aggregation; privacy–utility metrics | AI-1 | **Done** |
-| **M3** | Kafka `risk-signals` topic, schema registry, ACLs | Backend | Next |
-| **M4** | BankBot pre-transaction API, thresholds, audit log | Backend | Later |
-| **M5** | SHAP/LIME, drift monitoring, model rollback | AI-2 | Later |
-| **M6+** | More banks, graph features, robust aggregation | AI-1 | Later |
+| **M3** | Kafka `risk-signals` topic, schema registry, ACLs | Backend | **Done** |
+| **M4** | BankBot pre-transaction API, thresholds, audit log | Backend | **Done** |
+| **M5** | SHAP/LIME, drift monitoring, model rollback | AI-2 | **Done** |
+| **M6+** | More banks, graph features, robust aggregation | AI-1 | Next |
 
 Full write-up: [`docs/PROJECT.md`](docs/PROJECT.md). Execution plan: [`docs/PHASES.md`](docs/PHASES.md). Team split: [`docs/TEAM.md`](docs/TEAM.md). **Threat model and known limitations: [`docs/SECURITY.md`](docs/SECURITY.md).**
 
@@ -151,17 +151,83 @@ python -m aris.fl.privacy_sweep --dataset synthetic
 
 Writes `data/processed/m1_metrics_synthetic.json` (single run, `privacy.differential_privacy` block) and `data/processed/m2_privacy_utility_synthetic.json` (the sweep table). Add `--secure-agg` to the single run to aggregate through pairwise masking instead of plain FedAvg.
 
-### M3 — Kafka risk bus
+### M3 — Kafka risk bus (completed)
 
-_Not started._ The in-memory bus implements the `RiskBus` interface a Kafka backend will also implement.
+**Goal met:** `KafkaRiskBus` implements the same `RiskBus` interface as `InMemoryRiskBus`, over a real broker. Bank B publishes; Bank A, a *separate* `KafkaRiskBus` instance sharing nothing but the broker and registry, sees the same `risk_id` once its background consumer catches up.
 
-### M4 — BankBot API
+#### What shipped
 
-_Not started._ The policy and audit layers exist; only the HTTP surface is missing.
+| Piece | Where | What it does |
+| --- | --- | --- |
+| Kafka-backed bus | `src/aris/kafka_bus.py` | `KafkaRiskBus(RiskBus)` -- publishes to a compacted topic, consumes into a local materialized view |
+| Schema Registry client | `src/aris/schema_registry.py` | Confluent wire-format encode/decode + REST registration, over plain HTTP (no `confluent-kafka`/librdkafka dependency) |
+| Local dev broker | `docker-compose.yml` | Kafka (KRaft, `apache/kafka`) + Karapace (Confluent-API-compatible Schema Registry, chosen over `cp-schema-registry` for image size) |
 
-### M5 — Explainability & MLOps
+**Architecture: reuse, don't reimplement.** `KafkaRiskBus.publish()` verifies and applies a signal to an internal `InMemoryRiskBus` first -- getting every M0 admission, replay, and quota rule for free -- then produces it to the `risk-signals` topic (key `f"{risk_id}:{bank}"`, not bare `risk_id`, so log compaction can't let one bank's contribution evict another's). A background thread consumes the same topic into that same local view through the identical `publish()` call, including this process's own records, which the existing replay guard naturally no-ops on. `lookup()` only ever reads the local view, so it never blocks on the network.
 
-_Not started._
+**Message authenticity survives the transport.** A record that doesn't verify -- forged, or written directly to the topic bypassing `publish()` -- is rejected on consume the same way it would be on publish, by every reader independently. Transport-level access control (mTLS, per-bank ACLs) is a separate, still-open gap; see `docs/SECURITY.md` §3.8.
+
+Tests: `tests/test_kafka_bus.py` — cross-process visibility, forged-publisher rejection, replay-after-consume, and consumer resilience to an untrusted record — **verified passing against a live broker** (`docker compose up -d`, then `pytest tests/test_kafka_bus.py`: 5 passed). Skips cleanly with a clear reason, not silently, when no broker is reachable — e.g. in CI, which does not run Kafka.
+
+#### How to run M3
+
+```bash
+docker compose up -d          # Kafka + Schema Registry, local dev only (no TLS/ACLs)
+pip install -e ".[dev,kafka]"
+pytest tests/test_kafka_bus.py -v
+```
+
+### M4 — BankBot API (completed)
+
+**Goal met:** the Anu story runs over real HTTP — `POST /transfers` — against either bus backend from M3, with the same no-score-oracle customer response and the same idempotent-on-`transfer_id` behavior as the CLI demo.
+
+#### What shipped
+
+| Piece | Where | What it does |
+| --- | --- | --- |
+| FastAPI app | `src/aris/api/app.py` | `POST /transfers`, `GET /audit/{ref}`, `GET /health` — a thin HTTP wrapper; every decision still comes from `aris.bankbot.BankBot` |
+| Config | `src/aris/api/config.py` | Env-driven: bus backend, policy thresholds, analyst admin key |
+| Dev server | `python -m aris.api` | Runs against either bus backend |
+
+**Analyst audit access is real, not a stub.** `GET /audit/{audit_ref}` is the "authenticated analyst path" `BankBotDecision`'s docstring already promised — it needed `InMemoryAuditLog` to gain an actual `get()` lookup (previously only a linear `.entries` scan existed), now O(1) and keeping pace with eviction. The endpoint checks a shared admin key with `hmac.compare_digest` (constant-time) and fails closed — 503, not "auth optional" — when no key is configured.
+
+**Step-up auth is an honest stub.** `POST /transfers` reports `step_up_required: true` and stops there. A real deployment already has its own OTP/step-up flow; faking one here would be exactly the kind of plausible-looking fake logic this project's standards reject, so the response is honest about the gap instead of pretending to close it.
+
+**A real FastAPI/`from __future__ import annotations` gotcha, found and fixed.** The first draft used `Depends()` closures returning `app.state.bot` etc; every one silently misrouted as a query parameter instead of raising, because postponed annotation evaluation means FastAPI resolves `Annotated[X, Depends(f)]` against the route function's *module* globals, and a closure local to a factory function was never there to find. Routes now take `request: Request` and read `request.app.state` directly, which doesn't depend on runtime annotation resolution at all.
+
+`tests/test_api.py` covers the HTTP layer against `InMemoryRiskBus` (10 tests, always runs). `tests/test_api_kafka.py` re-runs the same Anu scenario — including a second bus/app instance standing in for Bank A's own process — against a live Kafka bus: **verified passing** (`docker compose up -d`, then `pytest tests/test_api_kafka.py`: 2 passed). With the broker up, `pytest` end to end → **236 passed, 0 skipped**; without it, the 6 Kafka-dependent M3/M4 tests skip with a clear reason instead of silently.
+
+#### How to run M4
+
+```bash
+ARIS_DEV_MODE=1 python -m aris.api                       # in-memory bus, port 8000
+ARIS_API_BUS_BACKEND=kafka ARIS_DEV_MODE=1 python -m aris.api   # needs `docker compose up -d`
+```
+
+### M5 — Explainability & MLOps (completed)
+
+**Goal met:** a blocked transfer's reason codes trace back to real SHAP attribution on the model that produced the score, drift between training and production data is quantified rather than assumed, and multiple trained checkpoints coexist under an explicit active/rollback pointer instead of one file silently overwriting the last.
+
+#### What shipped
+
+| Piece | Where | What it does |
+| --- | --- | --- |
+| Explainability | `src/aris/fl/explain.py` | `FraudExplainer` — permutation SHAP over `FraudScorer`, mapped to `reason_codes` |
+| Drift monitoring | `src/aris/fl/drift.py` | `check_drift` — Evidently `DataDriftPreset` (K-S test), reference vs. current batch |
+| Model registry | `src/aris/fl/registry.py` | `ModelRegistry` — versioned checkpoints, active pointer, atomic-write manifest; `should_rollback` criteria |
+
+**Honesty note on reason codes.** Mapping a feature to a named fraud pattern (`high_velocity`, `new_beneficiary`, ...) requires knowing what the feature represents. Neither dataset this repo trains on supports that in general — the synthetic dataset's features are anonymous by construction, and ULB's are PCA-anonymized for the same privacy reasons this whole project cares about. `FraudExplainer` takes an explicit, caller-supplied `reason_code_map`; an unmapped top-contributing feature reports the honest thing (which feature, how much it moved the score) via a generic fallback code, rather than inventing domain meaning a feature doesn't have.
+
+**Verified against ground truth, not just "runs without crashing."** `make_synthetic`'s fraud direction is known by construction (bank *i*'s fraud depends on feature `f{i % 8}`). `FraudExplainer` correctly identifies that exact feature as the dominant SHAP contributor for a bank's top-scored row (`shap=0.639` for `f0` vs. `0.006` for the next-largest — see `tests/test_fl_explain.py`). `check_drift` correctly flags only a feature that was actually shifted (mean +3, K-S p≈0) and correctly clears every unshifted one (`tests/test_fl_drift.py`).
+
+Tests: `tests/test_fl_explain.py`, `tests/test_fl_drift.py`, `tests/test_fl_registry.py` — **28 passed**, including an end-to-end trace from SHAP attribution through `RiskSignal`'s own token validator to an actual BankBot `BLOCK` decision.
+
+#### How to run M5
+
+```bash
+pip install -e ".[dev,ml,xai]"
+pytest tests/test_fl_explain.py tests/test_fl_drift.py tests/test_fl_registry.py -v
+```
 
 ### M6+ — Scale
 
@@ -210,22 +276,26 @@ pytest
 ```
 </details>
 
-The federated-learning and HTTP stacks are optional extras, not installed by default: `pip install -e ".[ml]"` for M1/M2, `pip install -e ".[api]"` for M4.
+Every stack past M0 is an optional extra, not installed by default: `pip install -e ".[ml]"` for M1/M2, `pip install -e ".[kafka]"` for M3, `pip install -e ".[api]"` for M4, `pip install -e ".[xai]"` for M5. `pip install -e ".[dev,ml,kafka,api,xai]"` gets everything.
 
 ## Layout
 
 ```
 src/aris/
-  hashing.py       risk_id derivation (HMAC-SHA256, key-derived, ASCII-only)
-  attestation.py   Ed25519 signing / verification of published signals
-  schema.py        RiskSignal, PolicyConfig, apply_policy — the shared contract
-  bus.py           RiskBus interface + in-memory implementation
-  bankbot.py       pre-transaction check, decisions, audit records
-  demo/            the Anu / ACC-999 walkthrough
-  fl/              M1: clients, FedAvg, datasets, metrics, scorer
-                   M2: privacy.py (DP-SGD + accountant), secure_agg.py, privacy_sweep.py
-docs/              project report, phases, team split, security model
-data/raw/          CSVs (not committed)
-data/processed/    M1/M2 metrics + weight checkpoints (not committed)
-tests/             hashing, attestation, schema/policy, bus, bankbot, demo, fl
+  hashing.py         risk_id derivation (HMAC-SHA256, key-derived, ASCII-only)
+  attestation.py     Ed25519 signing / verification of published signals
+  schema.py          RiskSignal, PolicyConfig, apply_policy — the shared contract
+  bus.py             RiskBus interface + in-memory implementation
+  kafka_bus.py       M3: RiskBus over a real Kafka broker
+  schema_registry.py M3: Confluent-wire-format schema registry client
+  bankbot.py         pre-transaction check, decisions, audit records
+  api/               M4: FastAPI wrapper (POST /transfers, GET /audit/{ref})
+  demo/              the Anu / ACC-999 walkthrough
+  fl/                M1: clients, FedAvg, datasets, metrics, scorer
+                     M2: privacy.py (DP-SGD + accountant), secure_agg.py, privacy_sweep.py
+                     M5: explain.py (SHAP), drift.py (Evidently), registry.py (versions/rollback)
+docs/                project report, phases, team split, security model
+data/raw/            CSVs (not committed)
+data/processed/      metrics, weight checkpoints, model registry manifest (not committed)
+tests/               hashing, attestation, schema/policy, bus, bankbot, demo, fl, api, kafka
 ```
