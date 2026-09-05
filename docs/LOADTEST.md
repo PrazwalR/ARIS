@@ -53,22 +53,36 @@ against `docker-compose.yml`'s local single-broker Kafka + Karapace:
 
 | Metric | Value |
 | --- | --- |
-| Duration | 0.56 s |
-| Publish throughput | **900 signals/s** |
+| Duration | 0.89 s |
+| Publish throughput | **564 signals/s** |
 | Accepted | 500 / 500 |
 | Lost updates | **0** |
-| Publish latency (mean / p50 / p95 / p99 / max) | 10.7 / 8.1 / 17.1 / 104.7 / 106.1 ms |
-| Lookup latency (mean / p50 / p95 / p99 / max) | 0.0 / 0.0 / 0.0 / 0.0 / 0.2 ms |
+| Publish latency (mean / p50 / p95 / p99 / max) | 15.8 / 5.4 / 45.9 / 306.4 / 527.2 ms |
+| Lookup latency (mean / p50 / p95 / p99 / max) | 8.1 / 0.0 / 30.4 / 448.2 / 529.5 ms |
 
 **Reading this.** Publish latency is dominated by `acks="all"` — every
 `publish()` waits for the broker to durably acknowledge the write before
 returning `PublishOutcome`, which is the right tradeoff for a fraud signal
 (losing one silently is worse than a few extra milliseconds) but costs a real
-network round trip per call, visible in p50 (8.1ms) versus the in-memory
-bus's near-zero. Lookup latency stays at zero regardless of publish load,
-exactly as designed: `KafkaRiskBus.lookup()` only ever reads the local
-materialized view (see `src/aris/kafka_bus.py`), never the network — BankBot
-never blocks on Kafka to make a policy decision.
+network round trip per call, visible in p50 (5.4ms) versus the in-memory
+bus's near-zero.
+
+**Lookup latency is no longer flat zero, and that is a deliberate,
+documented trade-off (docs/SECURITY.md SS3.4), not a regression to fix.**
+`KafkaRiskBus` used to replicate the entire topic into every instance's local
+view in the background, so `lookup()` never touched the network — but that
+meant every member bank could see every *other* bank's complete published
+`risk_id` set, not just the accounts it actually queried. The bus is now
+partitioned by `risk_id` prefix (256 buckets), and each instance only
+consumes the buckets it has actually needed, catching a cold one up to a
+snapshot of its current end offset before answering. p50 (0.0ms) shows most
+lookups here hit an already-warm bucket (this workload's lookup threads
+mostly query risk_ids their *own* publisher just wrote, which `publish()`
+already starts warming); the tail (p95 30ms, p99 448ms, max 530ms) is the
+real cost of a cold bucket's synchronous catch-up. A workload that looks up
+many distinct, never-before-seen accounts would see that cost on a much
+larger fraction of calls — this measures the two extremes this workload
+happens to exercise, not a guarantee about every access pattern.
 
 A single local broker with default (unbatched, `acks=all`, no compression)
 settings is not what a real deployment would run — this measures the
@@ -100,9 +114,8 @@ Kafka cluster, chaos testing) out of scope for this milestone.
 1. **`InMemoryRiskBus`'s single `RLock` serializes every publish.** Fine for
    a demo/test stand-in; a real high-throughput deployment uses the Kafka
    backend, which does not share this bottleneck (its lock only guards the
-   local materialized view, and Kafka itself parallelizes across partitions
-   — this repo's `docker-compose.yml` uses a single partition for simplicity,
-   which a real deployment would not).
+   local materialized view; the 256-partition `risk-signals` topic itself
+   parallelizes at the broker).
 2. **`KafkaRiskBus.publish()`'s `acks="all"` round trip is synchronous.** A
    bank's publish path blocks on it. This is deliberate (see above) but means
    publish throughput is bounded by broker round-trip latency, not by this
@@ -112,3 +125,13 @@ Kafka cluster, chaos testing) out of scope for this milestone.
    outright; `KafkaRiskBus` inherits whatever `KafkaProducer`'s internal
    buffering does. A production deployment needs real backpressure /
    rate-limiting at the API layer (M4), not just at the bus.
+4. **A cold `KafkaRiskBus.lookup()` blocks the transfer path on a real
+   network round trip, bounded by `_LOOKUP_WARMUP_TIMEOUT_S` (10s), not just
+   a local dict read.** This is the direct cost of SS3.4's prefix-bucketing
+   (see above) and is real, not a benchmark artifact: a bank whose customers
+   pay a wide, ever-changing set of receiver accounts will see this cost on a
+   meaningful fraction of transfers, not just the first one ever. A
+   production deployment wanting to avoid this on the customer-facing path
+   would need to warm likely buckets ahead of time (e.g. on receiver-account
+   entry, before the user confirms the transfer) rather than lazily at
+   `pre_transaction` time — not built here.

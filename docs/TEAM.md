@@ -102,16 +102,19 @@ Shipped: `FraudExplainer` (SHAP → `reason_codes`, `src/aris/fl/explain.py`),
 
 ### M6+ Scale — **in progress**
 
-Shipped: robust aggregation (`src/aris/fl/robust_agg.py`) and a bus load test
-(`src/aris/loadtest.py`, results in `docs/LOADTEST.md`). Not started: graph/
-velocity features (blocked on new synthetic transaction-history data -- no
-current dataset has one) and ACL/mTLS hardening (`docs/SECURITY.md` §3.8).
+Shipped: robust aggregation (`src/aris/fl/robust_agg.py`), a bus load test
+(`src/aris/loadtest.py`, results in `docs/LOADTEST.md`), and SECURITY.md
+hardening §3.2/§3.3/§3.4/§3.5 (`aris/hashing.py`, `aris/canary.py`,
+`aris/bankbot.py`, `aris/kafka_bus.py`). Not started: graph/velocity features
+(blocked on new synthetic transaction-history data -- no current dataset has
+one), the OPRF (§3.1) and HSM-resident key (§3.6), and ACL/mTLS hardening
+(`docs/SECURITY.md` §3.8).
 
 | Person | Tasks |
 | --- | --- |
 | **AI-1 (lead)** | Robust aggregation (Krum/median) -- done; more banks -- not started |
 | **AI-2** | On-prem graph / velocity features -- not started |
-| **Backend** | Bus load test -- done; ACL/mTLS hardening -- not started |
+| **Backend** | Bus load test -- done; SECURITY.md §3.2/§3.3/§3.4/§3.5 -- done; OPRF/HSM/ACL-mTLS hardening -- not started |
 
 ---
 
@@ -121,7 +124,7 @@ current dataset has one) and ACL/mTLS hardening (`docs/SECURITY.md` §3.8).
 | --- | --- |
 | `src/aris/fl/` | AI-1 |
 | `src/aris/` scoring / explain (to be added as `scorer.py`, `explain.py`) | AI-2 |
-| `src/aris/bus.py`, `src/aris/kafka_bus.py`, `src/aris/schema_registry.py`, `src/aris/bankbot.py`, `src/aris/hashing.py`, `src/aris/attestation.py`, `src/aris/api/` | Backend |
+| `src/aris/bus.py`, `src/aris/kafka_bus.py`, `src/aris/schema_registry.py`, `src/aris/bankbot.py`, `src/aris/hashing.py`, `src/aris/attestation.py`, `src/aris/canary.py`, `src/aris/api/` | Backend |
 | `src/aris/schema.py` | **All — change only with the group** |
 | `docs/PROJECT.md` | Shared report |
 | `README.md` Phase log | Whoever closed the phase (must update) |

@@ -99,7 +99,12 @@ README M2 phase log for the full table.
   `RiskBus` interface `InMemoryRiskBus` implements.
 - Query/lookup service: each `KafkaRiskBus` instance's background consumer
   thread builds a local materialized view (an internal `InMemoryRiskBus`) from
-  the compacted topic; `lookup()` reads that, never the network.
+  the compacted topic; `lookup()` reads that. As originally shipped this
+  replicated the whole topic, so `lookup()` never touched the network --
+  re-scoped in M6+ (`docs/SECURITY.md` §3.4) to a per-`risk_id`-prefix-bucket
+  view instead, once that full-replication shape turned out to leak every
+  member bank's complete published `risk_id` set to every other member. A
+  cold bucket now costs a real, bounded network round trip.
 - Auth placeholders: no SASL/mTLS/ACLs in the local-dev compose file by design
   (see `docs/SECURITY.md` §3.8 for the concrete `kafka-acls.sh` a real
   deployment needs) -- message-level Ed25519 verification still applies on
@@ -199,11 +204,17 @@ attribution through `RiskSignal`'s own token validator to an actual BankBot
 - Load test the bus -- **done.** `src/aris/loadtest.py`, measured against
   both `InMemoryRiskBus` and a live `KafkaRiskBus`: see
   [`docs/LOADTEST.md`](LOADTEST.md) for numbers, and known limits.
+- SECURITY.md hardening -- **done: §3.2, §3.3, §3.4, §3.5** (of the 7-item
+  priority list; §3.1, §3.6, §3.8 remain open). §3.4 in particular re-scoped
+  `KafkaRiskBus` from full-topic replication to prefix-bucketed consumption
+  -- see the README M6+ phase log and `docs/SECURITY.md` §3.4 for what that
+  actually closed and what it cost.
 
 **Done when:** Documented limits and attack notes for a report/defense.
-Partially met -- robust aggregation and the load test both have real,
-measured, documented results; graph/velocity features remain open, and so
-does the mTLS/ACL hardening `docs/SECURITY.md` §3.8 already flags.
+Partially met -- robust aggregation, the load test, and four SECURITY.md
+hardening items all have real, measured, documented results; graph/velocity
+features remain open, and so does the mTLS/ACL hardening `docs/SECURITY.md`
+§3.8 already flags.
 
 ---
 

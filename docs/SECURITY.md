@@ -114,13 +114,41 @@ This is a breaking change to `risk_id_for_account`'s signature and to the
 repo (BankBot, the demo, all tests) was updated; an external caller integrating against
 the old one-argument form or the old request shape needs to add the field.
 
-### 3.4 Lookups leak the beneficiary graph — *high*
+### 3.4 Lookups leak the beneficiary graph — *high* — done (re-scoped)
 
 Every lookup tells the bus operator that a specific bank is about to pay a specific
 (pseudonymous) account, right now. Over a day this reconstructs much of a bank's
 beneficiary graph with timing and volume. Mitigation is cheap: send a short prefix of
 the `risk_id` and filter locally, so the operator sees a bucket of several hundred
 candidates rather than the one you wanted.
+
+**This was written against a query-response bus and doesn't describe what M3 actually
+shipped.** `KafkaRiskBus.lookup()` never made a network call at all — every instance
+replicated the *entire* `risk-signals` topic into a local materialized view in the
+background, so there was no per-query traffic for an operator to correlate. That
+closed the exact threat this section describes, but by trading it for a different,
+undocumented one: every member bank's consumer downloaded every *other* bank's
+complete published `risk_id` set, not just the accounts it actually queried — a bigger
+exposure than "the operator learns your query," and one full replication could not
+avoid by construction.
+
+**Done:** `KafkaRiskBus` (`aris/kafka_bus.py`) now partitions `risk-signals` by
+`risk_id` prefix (`PREFIX_BUCKET_PARTITIONS = 256`, one bucket per first-byte value)
+and each instance consumes only the buckets it has actually published to or looked
+up, catching a bucket up to a snapshot of its current end offset before answering.
+`bucket_for_risk_id` is a pure function of the id, so publisher and reader sides
+always agree without coordination. Verified directly (`tests/test_kafka_bus_bucketing.py`):
+an instance that never asks about a given bucket does not have that bucket's data in
+its local store, even though it shares the same topic and the same broker connection
+as an instance that did.
+
+**Trade-off, stated explicitly:** a cold lookup now costs a bounded, synchronous
+catch-up of one partition (`_LOOKUP_WARMUP_TIMEOUT_S`, 10s) instead of reading an
+already-fully-warm local view — real added latency in the transfer path for a bank
+whose customers pay a wide, ever-changing set of receivers, not just a benchmark
+artifact. A timeout reports `UNAVAILABLE` per `RiskBus.lookup`'s existing fail-closed
+contract, never a false NOT_FOUND. Measured impact: `docs/LOADTEST.md`'s Kafka
+section — lookup latency p50 stayed nominal, p99 rose to hundreds of milliseconds.
 
 ### 3.5 A flagged account can self-identify — *medium* — partially done
 
@@ -194,7 +222,7 @@ top that limits blast radius and enables clean revocation, and it does not exist
 | --- | --- | --- | --- | --- |
 | 1 | `key_epoch` + per-epoch canary | 3.2 | 0.5 d | ✅ done |
 | 2 | Key on `(IFSC, account)`, length-prefixed | 3.3 | 0.5 d | ✅ done |
-| 3 | Prefix-bucket lookup | 3.4 | 0.5 d | open |
+| 3 | Prefix-bucket lookup | 3.4 | 0.5 d (actual: re-scoped, ~1 d) | ✅ done |
 | 4 | Quantise timestamp, round confidence | 3.5 | 1 h | ✅ done (jitter, score bucketing still open) |
 | 5 | OPRF-derived `risk_id` | 3.1 | 3–5 d | open |
 | 6 | HSM-resident key | 3.6 | 2–3 d | open |
