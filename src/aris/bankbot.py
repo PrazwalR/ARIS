@@ -19,7 +19,7 @@ from typing import Final
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from aris.bus import RiskBus
-from aris.hashing import risk_id_for_account
+from aris.hashing import normalize_ifsc, risk_id_for_account
 from aris.schema import Decision, LookupStatus, PolicyConfig, apply_policy
 
 logger = logging.getLogger(__name__)
@@ -48,6 +48,10 @@ class TransferRequest(BaseModel):
 
     user_ref: str = Field(min_length=1, max_length=64)
     bank_id: str = Field(min_length=1, max_length=32)
+    # The receiver's IFSC, not the sender's: an account number is unique only
+    # within its own bank, so risk_id must be derived from the pair. See
+    # docs/SECURITY.md SS3.3.
+    receiver_ifsc: str = Field(min_length=11, max_length=11)
     receiver_account: str = Field(min_length=1, max_length=64)
 
     # Money is held in integer minor units (paise). A float amount cannot
@@ -74,6 +78,14 @@ class TransferRequest(BaseModel):
         if not (stripped.isascii() and stripped.isprintable()):
             raise ValueError("value must be printable ASCII")
         return stripped
+
+    @field_validator("receiver_ifsc")
+    @classmethod
+    def _check_receiver_ifsc(cls, value: str) -> str:
+        # normalize_ifsc's strict [A-Z]{4}0[A-Z0-9]{6} pattern is already a
+        # stronger guarantee than the printable-ASCII check above, so this
+        # does not also need _printable_ascii_only.
+        return normalize_ifsc(value)
 
     @classmethod
     def from_major_units(cls, amount: Decimal | int | str, **kwargs: object) -> TransferRequest:
@@ -105,6 +117,7 @@ class AuditRecord(BaseModel):
     transfer_id: str
     user_ref: str
     bank_id: str
+    receiver_ifsc: str
     receiver_account: str
     amount_minor: int
     currency: str
@@ -255,7 +268,7 @@ class BankBot:
             logger.info("transfer=%s replayed; returning recorded decision", req.transfer_id)
             return seen
 
-        risk_id = risk_id_for_account(req.receiver_account)
+        risk_id = risk_id_for_account(req.receiver_ifsc, req.receiver_account)
 
         try:
             result = self.bus.lookup(risk_id)
@@ -295,6 +308,7 @@ class BankBot:
             transfer_id=req.transfer_id,
             user_ref=req.user_ref,
             bank_id=req.bank_id,
+            receiver_ifsc=req.receiver_ifsc,
             receiver_account=req.receiver_account,
             amount_minor=req.amount_minor,
             currency=req.currency,

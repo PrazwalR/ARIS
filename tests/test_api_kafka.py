@@ -29,8 +29,9 @@ def test_anu_transfer_blocked_over_http_via_kafka_bus():
     bank_b = Publisher.generate("BANK-B")
     keyring.register(bank_b.bank_id, bank_b.public_key)
 
+    ifsc = "HDFC0001234"
     account = f"ACC-{uuid.uuid4().hex[:12]}"
-    risk_id = risk_id_for_account(account)
+    risk_id = risk_id_for_account(ifsc, account)
 
     bus = KafkaRiskBus(keyring, bootstrap, registry_url)
     try:
@@ -56,6 +57,7 @@ def test_anu_transfer_blocked_over_http_via_kafka_bus():
             json={
                 "user_ref": "anu",
                 "bank_id": "BANK-A",
+                "receiver_ifsc": ifsc,
                 "receiver_account": account,
                 "amount_minor": 500000,
                 "currency": "INR",
@@ -76,8 +78,9 @@ def test_second_bank_process_sees_it_too_over_http():
     bank_b = Publisher.generate("BANK-B")
     keyring.register(bank_b.bank_id, bank_b.public_key)
 
+    ifsc = "HDFC0001234"
     account = f"ACC-{uuid.uuid4().hex[:12]}"
-    risk_id = risk_id_for_account(account)
+    risk_id = risk_id_for_account(ifsc, account)
 
     bus_b = KafkaRiskBus(keyring, bootstrap, registry_url)
     bus_a = KafkaRiskBus(keyring, bootstrap, registry_url)
@@ -99,6 +102,7 @@ def test_second_bank_process_sees_it_too_over_http():
         body = {
             "user_ref": "anu",
             "bank_id": "BANK-A",
+            "receiver_ifsc": ifsc,
             "receiver_account": account,
             "amount_minor": 500000,
         }

@@ -19,6 +19,7 @@ from aris.hashing import risk_id_for_account
 from aris.schema import RiskSignal
 
 ACCOUNT = "ACC-999"
+IFSC = "HDFC0001234"
 
 
 @pytest.fixture
@@ -49,7 +50,7 @@ def _signal(risk_id: str, score: int = 92) -> RiskSignal:
 class TestTransfersEndpoint:
     def test_flagged_account_is_blocked_over_http(self, keyring, bank_b):
         bus = InMemoryRiskBus(keyring)
-        risk_id = risk_id_for_account(ACCOUNT)
+        risk_id = risk_id_for_account(IFSC, ACCOUNT)
         bus.publish(bank_b.sign(_signal(risk_id, score=92)))
 
         app = create_app(bus, audit=InMemoryAuditLog())
@@ -60,6 +61,7 @@ class TestTransfersEndpoint:
             json={
                 "user_ref": "anu",
                 "bank_id": "BANK-A",
+                "receiver_ifsc": IFSC,
                 "receiver_account": ACCOUNT,
                 "amount_minor": 500000,
                 "currency": "INR",
@@ -86,6 +88,7 @@ class TestTransfersEndpoint:
             json={
                 "user_ref": "anu",
                 "bank_id": "BANK-A",
+                "receiver_ifsc": IFSC,
                 "receiver_account": "ACC-CLEAN",
                 "amount_minor": 500000,
             },
@@ -103,6 +106,7 @@ class TestTransfersEndpoint:
             json={
                 "user_ref": "anu",
                 "bank_id": "BANK-A",
+                "receiver_ifsc": IFSC,
                 "receiver_account": "ACC-CLEAN",
                 "amount_minor": -100,  # must be > 0
             },
@@ -116,6 +120,7 @@ class TestTransfersEndpoint:
         body = {
             "user_ref": "anu",
             "bank_id": "BANK-A",
+            "receiver_ifsc": IFSC,
             "receiver_account": "ACC-CLEAN",
             "amount_minor": 500000,
             "transfer_id": "retry-http-001",
@@ -153,7 +158,7 @@ class TestAuditEndpoint:
 
     def test_correct_key_retrieves_the_full_record_including_score(self, keyring, bank_b):
         bus = InMemoryRiskBus(keyring)
-        risk_id = risk_id_for_account(ACCOUNT)
+        risk_id = risk_id_for_account(IFSC, ACCOUNT)
         bus.publish(bank_b.sign(_signal(risk_id, score=92)))
 
         audit = InMemoryAuditLog()
@@ -165,6 +170,7 @@ class TestAuditEndpoint:
             json={
                 "user_ref": "anu",
                 "bank_id": "BANK-A",
+                "receiver_ifsc": IFSC,
                 "receiver_account": ACCOUNT,
                 "amount_minor": 500000,
             },

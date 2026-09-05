@@ -19,6 +19,7 @@ from aris.hashing import risk_id_for_account
 from aris.schema import Decision, LookupStatus, PolicyConfig, RiskSignal
 
 ACCOUNT = "ACC-999"
+IFSC = "HDFC0001234"
 
 
 @pytest.fixture
@@ -35,7 +36,7 @@ def flagged_bus(keyring: PublisherKeyring, bank_b: Publisher):
         bus.publish(
             bank_b.sign(
                 RiskSignal(
-                    risk_id=risk_id_for_account(ACCOUNT),
+                    risk_id=risk_id_for_account(IFSC, ACCOUNT),
                     risk_score=score,
                     confidence=0.94,
                     reason_codes=("high_velocity", "new_beneficiary"),
@@ -53,6 +54,7 @@ def request(**kw) -> TransferRequest:
     base = {
         "user_ref": "anu",
         "bank_id": "BANK-A",
+        "receiver_ifsc": IFSC,
         "receiver_account": ACCOUNT,
         "amount_minor": 500_000,
     }
@@ -83,6 +85,19 @@ class TestAnuStory:
             request(receiver_account="ACC-998")
         )
         assert other.entries[0].risk_id != rid, "different accounts collide"
+
+    def test_same_account_at_a_different_bank_does_not_collide(self, flagged_bus):
+        """SS3.3: an account number is unique only within its own bank, so
+        risk_id must be keyed on (ifsc, account), not the account alone."""
+        audit = InMemoryAuditLog()
+        BankBot(flagged_bus(), audit=audit).pre_transaction(request())
+        flagged_rid = audit.entries[0].risk_id
+
+        other = InMemoryAuditLog()
+        BankBot(InMemoryRiskBus(PublisherKeyring()), audit=other).pre_transaction(
+            request(receiver_ifsc="ICIC0009876")
+        )
+        assert other.entries[0].risk_id != flagged_rid
 
     def test_unflagged_receiver_is_allowed(self, empty_bus):
         out = BankBot(empty_bus).pre_transaction(request(receiver_account="ACC-111"))
@@ -159,7 +174,11 @@ class TestTransferValidation:
 
     def test_from_major_units_converts_rupees(self):
         req = TransferRequest.from_major_units(
-            Decimal("5000.00"), user_ref="anu", bank_id="BANK-A", receiver_account=ACCOUNT
+            Decimal("5000.00"),
+            user_ref="anu",
+            bank_id="BANK-A",
+            receiver_ifsc=IFSC,
+            receiver_account=ACCOUNT,
         )
         assert req.amount_minor == 500_000
         assert req.amount_major == Decimal("5000.00")
@@ -167,7 +186,11 @@ class TestTransferValidation:
     def test_sub_paise_precision_rejected(self):
         with pytest.raises(ValueError):
             TransferRequest.from_major_units(
-                Decimal("100.005"), user_ref="a", bank_id="BANK-A", receiver_account=ACCOUNT
+                Decimal("100.005"),
+                user_ref="a",
+                bank_id="BANK-A",
+                receiver_ifsc=IFSC,
+                receiver_account=ACCOUNT,
             )
 
     @pytest.mark.parametrize(
@@ -202,6 +225,13 @@ class TestTransferValidation:
         bot = BankBot(empty_bus)
         with pytest.raises(ValueError):
             bot.pre_transaction(request(receiver_account="!!"))
+
+    def test_malformed_receiver_ifsc_is_rejected_at_construction(self):
+        """Unlike receiver_account (rejected inside pre_transaction, at lookup
+        time), receiver_ifsc has a dedicated field_validator, so it fails
+        before a TransferRequest even exists."""
+        with pytest.raises(ValidationError):
+            request(receiver_ifsc="not-an-ifsc")
 
 
 class TestAuditTrail:
@@ -288,7 +318,7 @@ class TestIdempotency:
         bus.publish(
             bank_b.sign(
                 RiskSignal(
-                    risk_id=risk_id_for_account(ACCOUNT),
+                    risk_id=risk_id_for_account(IFSC, ACCOUNT),
                     risk_score=92,
                     confidence=0.94,
                     reason_codes=("high_velocity",),

@@ -262,8 +262,8 @@ python -m aris.loadtest --backend kafka --publishers 10 --signals 50   # needs d
 
 ## End-to-end story (demo target)
 
-1. Bank B scores receiver `ACC-999` as risk **92** and publishes `HMAC-SHA256(key, ACC-999)` to the bus, signed with Bank B's key.
-2. Anu (Bank A) asks BankBot to send ₹5,000 to `ACC-999`.
+1. Bank B scores receiver `ACC-999` as risk **92** and publishes `HMAC-SHA256(key, ifsc||account)` to the bus, signed with Bank B's key -- keyed on `(IFSC, account)`, not the account alone (`docs/SECURITY.md` §3.3).
+2. Anu (Bank A) asks BankBot to send ₹5,000 to `ACC-999` at Bank B's IFSC.
 3. Bank A derives the same `risk_id`, finds score 92, and policy **blocks** (`score ≥ 85`).
 4. A hostile member that tries to clear the flag by impersonating Bank B is rejected on the signature.
 

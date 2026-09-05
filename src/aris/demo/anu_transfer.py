@@ -23,6 +23,10 @@ from aris.schema import (
 )
 
 ACCOUNT = "ACC-999"
+# Bank B's IFSC -- ACC-999 is one of Bank B's customer accounts, and risk_id is
+# now derived from the (ifsc, account) pair, not the account alone (see
+# docs/SECURITY.md SS3.3).
+BANK_B_IFSC = "BKBB0001234"
 
 # No federated model exists yet (M1). Named so the demo output cannot be
 # mistaken for the product of a trained FL model.
@@ -59,7 +63,7 @@ def main() -> None:
     keyring.register(bank_evil.bank_id, bank_evil.public_key)
 
     bus = InMemoryRiskBus(keyring)
-    risk_id = risk_id_for_account(ACCOUNT)
+    risk_id = risk_id_for_account(BANK_B_IFSC, ACCOUNT)
 
     # Bank B saw the fraud first and publishes what it knows -- a pseudonymous
     # identifier and a score, never the account number.
@@ -84,6 +88,7 @@ def main() -> None:
         Decimal("5000.00"),
         user_ref="anu",
         bank_id="BANK-A",
+        receiver_ifsc=BANK_B_IFSC,
         receiver_account=ACCOUNT,
     )
     outcome = bot.pre_transaction(request)

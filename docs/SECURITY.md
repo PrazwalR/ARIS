@@ -74,13 +74,24 @@ day — so daily epoch keys would cost nothing functionally while capping how fa
 leaked key reaches. Needs: a `key_epoch` field, dual-epoch lookup during overlap, and a
 canary signal per epoch so a node with the wrong key detects it.
 
-### 3.3 The account number is not a globally unique key — *high*
+### 3.3 The account number is not a globally unique key — *high* — done
 
 `risk_id` is derived from the account number alone, which is unique only within a bank.
 Two customers at different banks can share an account number and therefore a `risk_id`,
 so a flag against one blocks the other. Keying on `(IFSC, account)` fixes it — with
 **length-prefixed** encoding, since naive concatenation collides
 (`"HDFC0001234"+"5678"` equals `"HDFC000123"+"45678"`).
+
+**Done:** `risk_id_for_account(ifsc, account, key=None)` (`aris/hashing.py`) now takes
+both, validates the IFSC against the real 11-character format (`[A-Z]{4}0[A-Z0-9]{6}`),
+and combines the pair with an explicit length prefix
+(`f"{len(ifsc)}:{ifsc}:{account}"`) rather than bare concatenation, so the two never
+collide regardless of either field's length. `TransferRequest` and `AuditRecord`
+(`aris/bankbot.py`) both carry a `receiver_ifsc` field alongside `receiver_account`.
+This is a breaking change to `risk_id_for_account`'s signature and to the
+`POST /transfers` request body (`receiver_ifsc` is now required) — every caller in this
+repo (BankBot, the demo, all tests) was updated; an external caller integrating against
+the old one-argument form or the old request shape needs to add the field.
 
 ### 3.4 Lookups leak the beneficiary graph — *high*
 
@@ -161,7 +172,7 @@ top that limits blast radius and enables clean revocation, and it does not exist
 | # | Change | Addresses | Effort | Status |
 | --- | --- | --- | --- | --- |
 | 1 | `key_epoch` + per-epoch canary | 3.2 | 0.5 d | open |
-| 2 | Key on `(IFSC, account)`, length-prefixed | 3.3 | 0.5 d | open |
+| 2 | Key on `(IFSC, account)`, length-prefixed | 3.3 | 0.5 d | ✅ done |
 | 3 | Prefix-bucket lookup | 3.4 | 0.5 d | open |
 | 4 | Quantise timestamp, round confidence | 3.5 | 1 h | ✅ done (jitter, score bucketing still open) |
 | 5 | OPRF-derived `risk_id` | 3.1 | 3–5 d | open |

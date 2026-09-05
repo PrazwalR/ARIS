@@ -1,9 +1,18 @@
 """Derivation of the pseudonymous ``risk_id`` that keys the Shared Risk-Signal Bus.
 
-    risk_id = HMAC-SHA256(consortium_key, normalize(account))
+    risk_id = HMAC-SHA256(consortium_key, length_prefixed(normalize(ifsc), normalize(account)))
 
-Every member bank derives the same identifier for the same account, and the bus
-never sees the account number itself.
+Every member bank derives the same identifier for the same ``(ifsc, account)`` pair,
+and the bus never sees the account number itself.
+
+Why ``(ifsc, account)`` and not ``account`` alone
+--------------------------------------------------
+An account number is unique only within its own bank. Two customers at different
+banks can share one, and hashing the account alone would derive the same
+``risk_id`` for both -- a flag against one blocks the other. Keying on the pair
+fixes it, and the pair is combined with an explicit length prefix rather than bare
+concatenation: without it, ``("HDFC0001234", "5678")`` and ``("HDFC000123",
+"45678")`` hash to the same bytes.
 
 Why HMAC rather than ``SHA256(account || salt)``
 ------------------------------------------------
@@ -62,6 +71,12 @@ _DEV_KEY: Final = b"\xa5" * MIN_KEY_BYTES
 
 _ACCOUNT_ALLOWED: Final = re.compile(r"\A[A-Z0-9-]{4,34}\Z")
 _HEX_KEY: Final = re.compile(r"\A[0-9a-fA-F]+\Z")
+
+# Indian Financial System Code: 4-letter bank code, a literal '0' reserved for
+# future use, 6-character alphanumeric branch code. Fixed-length by spec, but the
+# encoding below length-prefixes it anyway rather than leaning on that as an
+# implicit assumption -- see risk_id_for_account.
+_IFSC_PATTERN: Final = re.compile(r"\A[A-Z]{4}0[A-Z0-9]{6}\Z")
 
 
 class SaltNotConfigured(RuntimeError):
@@ -148,11 +163,45 @@ def normalize_account(account: str) -> str:
     return candidate
 
 
-def risk_id_for_account(account: str, key: bytes | None = None) -> str:
-    """Return ``HMAC-SHA256(key, normalize(account))`` as lowercase hex."""
+def normalize_ifsc(ifsc: str) -> str:
+    """Canonicalise an IFSC the same way ``normalize_account`` does an account.
+
+    See ``normalize_account`` for why whitespace is folded and non-ASCII input
+    is rejected before case folding.
+    """
+    if not isinstance(ifsc, str):
+        raise TypeError("ifsc must be a string")
+    candidate = "".join(ifsc.split())
+    if not candidate.isascii():
+        raise ValueError("ifsc must be ASCII")
+    candidate = candidate.upper()
+    if not _IFSC_PATTERN.match(candidate):
+        raise ValueError("ifsc is not a well-formed IFSC code")
+    return candidate
+
+
+def _length_prefixed_material(ifsc: str, account: str) -> bytes:
+    """Encode ``(ifsc, account)`` so the pair cannot collide with a different
+    pair under bare concatenation, e.g. ``("HDFC0001234", "5678")`` colliding
+    with ``("HDFC000123", "45678")``. The ifsc's own length -- not a fixed
+    field width -- is the delimiter, so this stays correct even if the IFSC
+    format's fixed length ever changes; it does not rely on that as an
+    unstated assumption.
+    """
+    return f"{len(ifsc)}:{ifsc}:{account}".encode("ascii")
+
+
+def risk_id_for_account(ifsc: str, account: str, key: bytes | None = None) -> str:
+    """Return ``HMAC-SHA256(key, length_prefixed(normalize(ifsc), normalize(account)))``
+    as lowercase hex.
+
+    Keyed on the pair, not the account alone: an account number is unique only
+    within its own bank, so two customers at different banks can otherwise share
+    a `risk_id` and a flag against one blocks the other. See docs/SECURITY.md SS3.3.
+    """
     if key is None:
         key = load_salt()
     elif len(key) < MIN_KEY_BYTES:
         raise ValueError(f"key must be at least {MIN_KEY_BYTES} bytes")
-    material = normalize_account(account).encode("ascii")
+    material = _length_prefixed_material(normalize_ifsc(ifsc), normalize_account(account))
     return hmac.new(key, material, sha256).hexdigest()

@@ -190,8 +190,9 @@ indistinguishable from a real security control without being one.
 
 Bank B’s model scores `ACC-999` as high risk: `risk_score = 92`.
 
-Bank B computes `risk_id_999 = HMAC-SHA256(consortium_key, "ACC-999")` → e.g.
-`a29e47bb…f420`, and signs the signal with its Ed25519 key.
+Bank B computes `risk_id_999 = HMAC-SHA256(consortium_key, length_prefixed("BKBB0001234", "ACC-999"))`
+→ e.g. `a29e47bb…f420`, and signs the signal with its Ed25519 key. Keyed on the
+`(IFSC, account)` pair, not the account alone — see `docs/SECURITY.md` §3.3.
 
 Bank B publishes that signal to the bus (no plain account number).
 

@@ -133,7 +133,7 @@ def test_shap_derived_reason_codes_flow_end_to_end_to_a_block_decision(bank_a_sc
     keyring.register(bank_b.bank_id, bank_b.public_key)
 
     signal = RiskSignal(
-        risk_id=risk_id_for_account("ACC-999"),
+        risk_id=risk_id_for_account("HDFC0001234", "ACC-999"),
         risk_score=round(scores[idx] * 100),
         confidence=0.9,
         reason_codes=exp.reason_codes,  # must pass RiskSignal's own token validator
@@ -147,6 +147,7 @@ def test_shap_derived_reason_codes_flow_end_to_end_to_a_block_decision(bank_a_sc
     req = TransferRequest(
         user_ref="anu",
         bank_id="BANK-A",
+        receiver_ifsc="HDFC0001234",
         receiver_account="ACC-999",
         amount_minor=500000,
         transfer_id="explain-e2e-001",
