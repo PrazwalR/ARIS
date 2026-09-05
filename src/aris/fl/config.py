@@ -46,6 +46,19 @@ class TrainConfig:
     # about what the aggregate model itself can leak -- that's DP's job.
     secure_agg: bool = False
 
+    # M6+ -- Byzantine-robust aggregation (see aris.fl.robust_agg), an
+    # alternative to plain FedAvg's weighted mean. "fedavg" (default) is not
+    # robust to any malicious client; "krum" and "coordinate_median" are, up to
+    # a bound each documents. Mutually exclusive with secure_agg: masking
+    # (secure_agg) and robust selection/reduction (this) both need to see or
+    # act on the *set* of updates in ways the other's transform breaks --
+    # combining them is a real, unsolved research question, not a supported
+    # configuration here.
+    aggregation_strategy: str = "fedavg"
+    # Assumed number of Byzantine clients "krum" tolerates. Only meaningful
+    # for that strategy; validated against num_banks below.
+    num_byzantine: int = 1
+
     def __post_init__(self) -> None:
         # Validated here, at construction time, rather than left to fail deep
         # inside training or the epsilon accountant: a bad value below doesn't
@@ -71,3 +84,20 @@ class TrainConfig:
                 raise ValueError(f"max_grad_norm must be positive, got {self.max_grad_norm}")
             if not (0.0 < self.dp_delta < 1.0):
                 raise ValueError(f"dp_delta must be in (0, 1), got {self.dp_delta}")
+        valid_strategies = ("fedavg", "krum", "coordinate_median")
+        if self.aggregation_strategy not in valid_strategies:
+            raise ValueError(
+                f"aggregation_strategy must be one of {valid_strategies}, "
+                f"got {self.aggregation_strategy!r}"
+            )
+        if self.aggregation_strategy == "krum" and self.num_banks <= 2 * self.num_byzantine + 2:
+            raise ValueError(
+                f"krum needs num_banks > 2*num_byzantine + 2 to guarantee robustness "
+                f"(num_banks={self.num_banks}, num_byzantine={self.num_byzantine})"
+            )
+        if self.secure_agg and self.aggregation_strategy != "fedavg":
+            raise ValueError(
+                "secure_agg and aggregation_strategy are mutually exclusive: masking "
+                "(secure_agg) and robust selection (krum/coordinate_median) both need "
+                "to act on the set of updates in ways the other's transform breaks."
+            )

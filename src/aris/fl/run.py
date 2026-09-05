@@ -31,6 +31,7 @@ from aris.fl.partition import (
     temporal_shards,
 )
 from aris.fl.privacy import epsilon_for_dpsgd
+from aris.fl.robust_agg import coordinate_median, krum
 from aris.fl.scorer import save_weights
 from aris.fl.secure_agg import secure_fedavg
 
@@ -187,6 +188,25 @@ def _train_local_baselines(
     return rows
 
 
+def _aggregate(
+    updates: list[tuple[list[npt.NDArray[Any]], int]],
+    cfg: TrainConfig,
+    seed_offset: int,
+) -> list[npt.NDArray[Any]]:
+    """One round's client updates -> one global update, via whichever strategy
+    `cfg` selects. `TrainConfig.__post_init__` already rejects the
+    secure_agg + non-fedavg combination, so this only has three cases to pick
+    among, never a conflicting pair.
+    """
+    if cfg.secure_agg:
+        return secure_fedavg(updates, seed=cfg.seed + seed_offset)
+    if cfg.aggregation_strategy == "krum":
+        return krum(updates, num_byzantine=cfg.num_byzantine)
+    if cfg.aggregation_strategy == "coordinate_median":
+        return coordinate_median(updates)
+    return fedavg(updates)
+
+
 def _federated_train(
     clients: list[BankFlowerClient],
     cfg: TrainConfig,
@@ -220,7 +240,7 @@ def _federated_train(
                         "Refusing to silently default to 0 and understate epsilon."
                     )
                 dp_steps_per_client[client.bank_id] += int(fit_metrics["dp_steps"])
-        weights = secure_fedavg(updates, seed=cfg.seed + rnd) if cfg.secure_agg else fedavg(updates)
+        weights = _aggregate(updates, cfg, seed_offset=rnd)
         logs.append({"round": rnd, "clients": len(updates)})
     return weights, logs, dp_steps_per_client
 
