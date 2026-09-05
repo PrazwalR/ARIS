@@ -84,5 +84,9 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 # Keeps `pytest` working from a bare checkout, without requiring `pip install -e .`.
-pythonpath = ["src"]
+# "." (not just "src") because tests/test_api_kafka.py does
+# `from tests.test_kafka_bus import requires_kafka`, which needs the repo root
+# importable as a package -- true for free under `python -m pytest` (which puts
+# cwd on sys.path) but not under a bare `pytest` invocation, which is what CI runs.
+pythonpath = ["src", "."]
 addopts = "-q --strict-markers --strict-config"
