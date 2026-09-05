@@ -176,7 +176,7 @@ attribution through `RiskSignal`'s own token validator to an actual BankBot
 
 ---
 
-## M6+ — Scale and robustness
+## M6+ — Scale and robustness (**in progress**)
 
 **Lead:** AI-1. **Support:** AI-2 (graph features), Backend (bus load test).
 
@@ -184,14 +184,33 @@ attribution through `RiskSignal`'s own token validator to an actual BankBot
 
 **Deliverables**
 
-- Graph/receiver-velocity features still computed **on-prem**
-- Robust aggregation (e.g. Krum / median) experiments
-- Load test the bus
+- Graph/receiver-velocity features still computed **on-prem** -- **not
+  started.** Needs an account-level transaction *history*; neither dataset
+  this repo trains on has one (the synthetic generator and ULB/PaySim/IEEE-CIS
+  loaders all produce one row per transaction with no linked prior activity
+  for the same receiver), so this needs new synthetic-data generation work,
+  not just a feature-engineering pass on what's already loaded.
+- Robust aggregation (Krum / coordinate-median) -- **done.**
+  `src/aris/fl/robust_agg.py`, wired into `TrainConfig.aggregation_strategy`.
+  Verified against an actual attack (a Byzantine client lying about both its
+  update's values and its declared example count, present every round):
+  degrades plain FedAvg to near-random, Krum keeps learning under the
+  identical attack. See the README M6+ phase log.
+- Load test the bus -- **done.** `src/aris/loadtest.py`, measured against
+  both `InMemoryRiskBus` and a live `KafkaRiskBus`: see
+  [`docs/LOADTEST.md`](LOADTEST.md) for numbers, and known limits.
 
 **Done when:** Documented limits and attack notes for a report/defense.
+Partially met -- robust aggregation and the load test both have real,
+measured, documented results; graph/velocity features remain open, and so
+does the mTLS/ACL hardening `docs/SECURITY.md` §3.8 already flags.
 
 ---
 
 ## Suggested next session
 
-**M0–M5 are done.** Start **M6+**: AI-1 robust aggregation (Krum/median) and more banks; AI-2 on-prem graph/velocity features; Backend bus load testing and the mTLS/ACL hardening flagged in `docs/SECURITY.md` §3.8. When a phase closes, append what shipped to the Phase log in `README.md`.
+**M0–M5 are done; M6+ is partial** (robust aggregation and bus load testing
+shipped; graph/velocity features and mTLS/ACL hardening remain). Next: AI-2
+graph/velocity features (needs new synthetic transaction-history generation
+first); Backend the mTLS/ACL hardening flagged in `docs/SECURITY.md` §3.8.
+When a phase closes, append what shipped to the Phase log in `README.md`.

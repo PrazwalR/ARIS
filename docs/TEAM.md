@@ -100,13 +100,18 @@ Shipped: `FraudExplainer` (SHAP → `reason_codes`, `src/aris/fl/explain.py`),
 
 ---
 
-### M6+ Scale
+### M6+ Scale — **in progress**
+
+Shipped: robust aggregation (`src/aris/fl/robust_agg.py`) and a bus load test
+(`src/aris/loadtest.py`, results in `docs/LOADTEST.md`). Not started: graph/
+velocity features (blocked on new synthetic transaction-history data -- no
+current dataset has one) and ACL/mTLS hardening (`docs/SECURITY.md` §3.8).
 
 | Person | Tasks |
 | --- | --- |
-| **AI-1 (lead)** | Robust aggregation (Krum/median); more banks |
-| **AI-2** | On-prem graph / velocity features |
-| **Backend** | Bus load test; ACL/mTLS hardening |
+| **AI-1 (lead)** | Robust aggregation (Krum/median) -- done; more banks -- not started |
+| **AI-2** | On-prem graph / velocity features -- not started |
+| **Backend** | Bus load test -- done; ACL/mTLS hardening -- not started |
 
 ---
 

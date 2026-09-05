@@ -4,7 +4,7 @@
 
 The goal: banks collaboratively train a fraud model with federated learning (no raw transactions leave the bank), and when a receiver account is high risk they publish only a **pseudonymous risk ID + score** to a shared bus. BankBot checks that bus before a transfer and can pause or block it—even if another bank first saw the fraud.
 
-**Status: M0–M5 are built and tested — the bus, the policy, BankBot (now over HTTP), federated learning, DP-SGD privacy on training, the Kafka-backed risk bus, and SHAP explainability + drift monitoring + model registry. See the phase table.**
+**Status: M0–M5 are built and tested, M6+ in progress — the bus, the policy, BankBot (now over HTTP), federated learning, DP-SGD privacy on training, the Kafka-backed risk bus, SHAP explainability + drift monitoring + model registry, and (M6+) Byzantine-robust aggregation + a measured bus load test. See the phase table.**
 
 **Team:** 2 AI · 1 backend — see [`docs/TEAM.md`](docs/TEAM.md). After each phase, update the **Phase log** below.
 
@@ -18,7 +18,7 @@ The goal: banks collaboratively train a fraud model with federated learning (no 
 | **M3** | Kafka `risk-signals` topic, schema registry, ACLs | Backend | **Done** |
 | **M4** | BankBot pre-transaction API, thresholds, audit log | Backend | **Done** |
 | **M5** | SHAP/LIME, drift monitoring, model rollback | AI-2 | **Done** |
-| **M6+** | More banks, graph features, robust aggregation | AI-1 | Next |
+| **M6+** | More banks, graph features, robust aggregation | AI-1 | **In progress** |
 
 Full write-up: [`docs/PROJECT.md`](docs/PROJECT.md). Execution plan: [`docs/PHASES.md`](docs/PHASES.md). Team split: [`docs/TEAM.md`](docs/TEAM.md). **Threat model and known limitations: [`docs/SECURITY.md`](docs/SECURITY.md).**
 
@@ -229,9 +229,30 @@ pip install -e ".[dev,ml,xai]"
 pytest tests/test_fl_explain.py tests/test_fl_drift.py tests/test_fl_registry.py -v
 ```
 
-### M6+ — Scale
+### M6+ — Scale (in progress)
 
-_Not started._
+**Shipped:** Byzantine-robust aggregation and a bus load test, both with real measured/verified results.
+
+| Piece | Where | What it does |
+| --- | --- | --- |
+| Robust aggregation | `src/aris/fl/robust_agg.py` | Krum, coordinate-median — alternatives to FedAvg's weighted mean, selectable via `TrainConfig.aggregation_strategy` |
+| Bus load test | `src/aris/loadtest.py` | Concurrent publish + lookup against either bus backend; measures throughput, latency, and correctness (no lost updates, correct quota enforcement) under contention |
+
+**Robust aggregation, verified against an actual attack.** A synthetic Byzantine client — ignores local training, sends a -1000x-scaled update, *and* lies about its declared example count (the more realistic and more damaging version of the attack, since FedAvg's weighted mean trusts that count with no way to verify it) — present every round for 6 rounds: plain FedAvg's resulting model degrades to near-random (AUC < 0.55); Krum, which ignores declared counts entirely and selects the single update closest to its peers, keeps learning under the identical attack (AUC > 0.55). See `tests/test_fl_robust_agg.py`.
+
+**Bus load test, measured on both backends.** 20 concurrent publishers/lookups against `InMemoryRiskBus`: **3,517 signals/s**, 0 lost updates. 10 against a live `KafkaRiskBus`: **900 signals/s** (dominated by `acks="all"`'s broker round trip — the right tradeoff for a fraud signal), 0 lost updates, lookup latency pinned near zero regardless of publish load since `lookup()` only ever reads the local materialized view. Quota enforcement verified exact under concurrent contention (10 publishers × 20 signals against a 50-entry cap admits exactly 50, rejects exactly 150, every run). Full numbers, tail-latency analysis, and known limits: [`docs/LOADTEST.md`](docs/LOADTEST.md).
+
+**Not yet done:** graph/receiver-velocity features (needs account-level transaction *history*, which none of this repo's datasets have — a real gap, not a feature-engineering afterthought) and the mTLS/Kafka-ACL hardening `docs/SECURITY.md` §3.8 already flags.
+
+Tests: `tests/test_fl_robust_agg.py`, `tests/test_loadtest.py` — **16 passed**.
+
+#### How to run
+
+```bash
+pytest tests/test_fl_robust_agg.py tests/test_loadtest.py -v
+python -m aris.loadtest --backend memory --publishers 20 --signals 200
+python -m aris.loadtest --backend kafka --publishers 10 --signals 50   # needs docker compose up -d
+```
 
 ## Domain split (quick)
 
@@ -290,12 +311,14 @@ src/aris/
   schema_registry.py M3: Confluent-wire-format schema registry client
   bankbot.py         pre-transaction check, decisions, audit records
   api/               M4: FastAPI wrapper (POST /transfers, GET /audit/{ref})
+  loadtest.py        M6+: concurrent publish/lookup load test, either bus backend
   demo/              the Anu / ACC-999 walkthrough
   fl/                M1: clients, FedAvg, datasets, metrics, scorer
                      M2: privacy.py (DP-SGD + accountant), secure_agg.py, privacy_sweep.py
                      M5: explain.py (SHAP), drift.py (Evidently), registry.py (versions/rollback)
-docs/                project report, phases, team split, security model
+                     M6+: robust_agg.py (Krum, coordinate-median)
+docs/                project report, phases, team split, security model, load test results
 data/raw/            CSVs (not committed)
 data/processed/      metrics, weight checkpoints, model registry manifest (not committed)
-tests/               hashing, attestation, schema/policy, bus, bankbot, demo, fl, api, kafka
+tests/               hashing, attestation, schema/policy, bus, bankbot, demo, fl, api, kafka, loadtest
 ```
