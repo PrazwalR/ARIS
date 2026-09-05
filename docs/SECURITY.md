@@ -62,7 +62,7 @@ unbounded, silent, retroactive compromise into a bounded, logged, prospective on
 the contribution is not "we hash the account number" — that is neither novel nor sound —
 but a bus design whose privacy failure mode is explicit and bounded.
 
-### 3.2 No key rotation support — *high*
+### 3.2 No key rotation support — *high* — done
 
 There is no `key_epoch` field. Rotating the consortium key silently orphans every
 existing signal: lookups miss, and a miss resolves to allow. Rotation, a partial
@@ -73,6 +73,27 @@ Because TTL is capped at 7 days and defaults to 24 hours, a signal is useless af
 day — so daily epoch keys would cost nothing functionally while capping how far back a
 leaked key reaches. Needs: a `key_epoch` field, dual-epoch lookup during overlap, and a
 canary signal per epoch so a node with the wrong key detects it.
+
+**Done:** `risk_id_for_account` (`aris/hashing.py`) derives an HMAC subkey per UTC day
+(`_derive_epoch_key`) from the one root `ARIS_SALT`, rather than hashing straight
+against it — a leaked day's subkey exposes neither the root nor any other day's
+subkey, and an actual `ARIS_SALT` rotation invalidates every derived subkey in one
+action. `RiskSignal.key_epoch` (`aris/schema.py`) records which epoch a signal was
+derived under. `BankBot._lookup_receiver` (`aris/bankbot.py`) tries the current epoch
+first, then falls back to the previous one, so a signal published just before a
+UTC-day boundary is still found just after it — a real outage on the first attempt is
+not retried against the second, since it is the same outage either way. Canary:
+`aris/canary.py`'s `publish_epoch_canary`/`check_epoch_canary` publish and check a
+reserved marker signal per epoch, so a node whose key has drifted fails this one
+well-known check instead of silently mismatching on every real signal — documented
+honestly: a `False` result cannot distinguish "wrong key" from "nobody has published
+into this epoch yet."
+
+**Trade-off, stated explicitly (mirrors SS3.5's):** a signal is only reachable via
+lookup for two epochs (today and yesterday) after publication, regardless of its own
+`ttl_hours` — a signal published with the maximum 7-day TTL is still unreachable
+after two days once its epoch rolls out of the lookup window. The daily rotation
+this buys is judged worth that cost, per the reasoning above.
 
 ### 3.3 The account number is not a globally unique key — *high* — done
 
@@ -171,7 +192,7 @@ top that limits blast radius and enables clean revocation, and it does not exist
 
 | # | Change | Addresses | Effort | Status |
 | --- | --- | --- | --- | --- |
-| 1 | `key_epoch` + per-epoch canary | 3.2 | 0.5 d | open |
+| 1 | `key_epoch` + per-epoch canary | 3.2 | 0.5 d | ✅ done |
 | 2 | Key on `(IFSC, account)`, length-prefixed | 3.3 | 0.5 d | ✅ done |
 | 3 | Prefix-bucket lookup | 3.4 | 0.5 d | open |
 | 4 | Quantise timestamp, round confidence | 3.5 | 1 h | ✅ done (jitter, score bucketing still open) |

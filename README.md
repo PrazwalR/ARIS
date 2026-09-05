@@ -242,9 +242,15 @@ pytest tests/test_fl_explain.py tests/test_fl_drift.py tests/test_fl_registry.py
 
 **Bus load test, measured on both backends.** 20 concurrent publishers/lookups against `InMemoryRiskBus`: **3,517 signals/s**, 0 lost updates. 10 against a live `KafkaRiskBus`: **900 signals/s** (dominated by `acks="all"`'s broker round trip — the right tradeoff for a fraud signal), 0 lost updates, lookup latency pinned near zero regardless of publish load since `lookup()` only ever reads the local materialized view. Quota enforcement verified exact under concurrent contention (10 publishers × 20 signals against a 50-entry cap admits exactly 50, rejects exactly 150, every run). Full numbers, tail-latency analysis, and known limits: [`docs/LOADTEST.md`](docs/LOADTEST.md).
 
-**Not yet done:** graph/receiver-velocity features (needs account-level transaction *history*, which none of this repo's datasets have — a real gap, not a feature-engineering afterthought) and the mTLS/Kafka-ACL hardening `docs/SECURITY.md` §3.8 already flags.
+**Also shipped: SECURITY.md items 3.2, 3.3, 3.5** (of the 7-item priority list in §4 — 3, 5, 6, 7 remain open).
 
-Tests: `tests/test_fl_robust_agg.py`, `tests/test_loadtest.py` — **16 passed**.
+- **3.5 — quantised timestamp, rounded confidence.** `RiskSignal.timestamp` floors to a 1-minute bucket and `confidence` rounds to the nearest 0.05 at construction, so neither survives on the bus as a linkage tag precise enough to correlate a signal to a specific real-world event.
+- **3.3 — `risk_id` keyed on `(IFSC, account)`.** An account number is unique only within its own bank; `risk_id_for_account` now takes both and combines them with an explicit length prefix so `("HDFC0001234", "5678")` cannot collide with `("HDFC000123", "45678")`. Breaking change: `POST /transfers` now requires `receiver_ifsc`.
+- **3.2 — daily key-rotation epochs + canary.** `risk_id` is derived under an HMAC subkey for the current UTC day, itself a one-way function of `ARIS_SALT` — a leaked day's subkey exposes neither the root key nor any other day's. `BankBot` looks up the current epoch, then falls back to the previous one, so a signal published just before a UTC-day boundary is still found just after it. `aris/canary.py` publishes and checks a reserved per-epoch marker signal so a node whose key has drifted out of sync fails one well-known check instead of silently missing every real signal.
+
+**Not yet done:** graph/receiver-velocity features (needs account-level transaction *history*, which none of this repo's datasets have — a real gap, not a feature-engineering afterthought), the mTLS/Kafka-ACL hardening `docs/SECURITY.md` §3.8 already flags, and SECURITY.md items 3.1 (OPRF), 3.4 (prefix-bucket lookup), 3.6 (HSM-resident key).
+
+Tests: full suite — **279 passed** (includes `tests/test_fl_robust_agg.py`, `tests/test_loadtest.py`, `tests/test_hashing.py`, `tests/test_bankbot.py`, `tests/test_canary.py`).
 
 #### How to run
 

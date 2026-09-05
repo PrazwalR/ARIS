@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
 from aris.hashing import (
+    EPOCH_SECONDS,
     MIN_KEY_BYTES,
     SaltNotConfigured,
     _length_prefixed_material,
+    current_epoch,
     generate_key,
     load_salt,
     risk_id_for_account,
@@ -16,6 +20,45 @@ from aris.hashing import (
 KEY = bytes.fromhex("a1b2c3d4" * 8)  # 32 bytes
 IFSC = "HDFC0001234"
 OTHER_IFSC = "ICIC0009876"
+
+
+class TestKeyEpoch:
+    def test_current_epoch_is_whole_days_since_unix_epoch(self):
+        now = datetime(2026, 9, 5, 12, 34, 56, tzinfo=timezone.utc)
+        assert current_epoch(now) == int(now.timestamp() // EPOCH_SECONDS)
+
+    def test_current_epoch_advances_at_the_utc_day_boundary(self):
+        just_before = datetime(2026, 9, 5, 23, 59, 59, tzinfo=timezone.utc)
+        just_after = just_before + timedelta(seconds=1)
+        assert current_epoch(just_after) == current_epoch(just_before) + 1
+
+    def test_same_epoch_yields_same_risk_id(self):
+        epoch = current_epoch()
+        assert risk_id_for_account(IFSC, "ACC-999", KEY, epoch=epoch) == risk_id_for_account(
+            IFSC, "ACC-999", KEY, epoch=epoch
+        )
+
+    def test_different_epochs_yield_different_risk_ids(self):
+        epoch = current_epoch()
+        assert risk_id_for_account(IFSC, "ACC-999", KEY, epoch=epoch) != risk_id_for_account(
+            IFSC, "ACC-999", KEY, epoch=epoch + 1
+        )
+
+    def test_default_epoch_is_the_current_one(self):
+        assert risk_id_for_account(IFSC, "ACC-999", KEY) == risk_id_for_account(
+            IFSC, "ACC-999", KEY, epoch=current_epoch()
+        )
+
+    def test_epoch_subkey_derivation_is_actually_wired_in(self):
+        """Regression guard: risk_id must differ from hashing straight against
+        the root key, which is what the pre-SS3.2 scheme did and what a
+        no-op/bypassed epoch derivation would silently regress to."""
+        epoch = current_epoch()
+        via_epoch = risk_id_for_account(IFSC, "ACC-999", KEY, epoch=epoch)
+        straight_from_root = hmac.new(
+            KEY, _length_prefixed_material(IFSC, "ACC-999"), hashlib.sha256
+        ).hexdigest()
+        assert via_epoch != straight_from_root
 
 
 def test_same_pair_yields_same_risk_id_at_every_bank():

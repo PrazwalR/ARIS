@@ -1,9 +1,12 @@
 """Derivation of the pseudonymous ``risk_id`` that keys the Shared Risk-Signal Bus.
 
-    risk_id = HMAC-SHA256(consortium_key, length_prefixed(normalize(ifsc), normalize(account)))
+    epoch_key = HMAC-SHA256(consortium_key, "aris-epoch:<epoch>")
+    risk_id   = HMAC-SHA256(epoch_key, length_prefixed(normalize(ifsc), normalize(account)))
 
-Every member bank derives the same identifier for the same ``(ifsc, account)`` pair,
-and the bus never sees the account number itself.
+Every member bank derives the same identifier for the same ``(ifsc, account)`` pair
+in the same epoch, and the bus never sees the account number itself. ``epoch``
+defaults to the current UTC day -- see ``current_epoch`` and docs/SECURITY.md SS3.2
+for why every risk_id is bound to one.
 
 Why ``(ifsc, account)`` and not ``account`` alone
 --------------------------------------------------
@@ -53,6 +56,7 @@ import hmac
 import os
 import re
 import secrets
+from datetime import datetime, timezone
 from hashlib import sha256
 from typing import Final
 
@@ -77,6 +81,14 @@ _HEX_KEY: Final = re.compile(r"\A[0-9a-fA-F]+\Z")
 # encoding below length-prefixes it anyway rather than leaning on that as an
 # implicit assumption -- see risk_id_for_account.
 _IFSC_PATTERN: Final = re.compile(r"\A[A-Z]{4}0[A-Z0-9]{6}\Z")
+
+# Key rotation (docs/SECURITY.md SS3.2): rather than requiring ops to manually
+# rotate ARIS_SALT, every risk_id is derived under a subkey for the current UTC
+# day, itself a one-way function of the one root secret. This bounds how far
+# back a leaked subkey reaches to (at most) the rotation window, for free,
+# without any operational key-management action -- and an actual ARIS_SALT
+# rotation still works on top of it, invalidating every derived subkey at once.
+EPOCH_SECONDS: Final = 86_400  # 1 day
 
 
 class SaltNotConfigured(RuntimeError):
@@ -191,17 +203,40 @@ def _length_prefixed_material(ifsc: str, account: str) -> bytes:
     return f"{len(ifsc)}:{ifsc}:{account}".encode("ascii")
 
 
-def risk_id_for_account(ifsc: str, account: str, key: bytes | None = None) -> str:
-    """Return ``HMAC-SHA256(key, length_prefixed(normalize(ifsc), normalize(account)))``
-    as lowercase hex.
+def current_epoch(now: datetime | None = None) -> int:
+    """Return the current key epoch: whole UTC days since the Unix epoch."""
+    now = now if now is not None else datetime.now(timezone.utc)
+    return int(now.timestamp() // EPOCH_SECONDS)
 
-    Keyed on the pair, not the account alone: an account number is unique only
-    within its own bank, so two customers at different banks can otherwise share
-    a `risk_id` and a flag against one blocks the other. See docs/SECURITY.md SS3.3.
+
+def _derive_epoch_key(master_key: bytes, epoch: int) -> bytes:
+    """HMAC-derive this epoch's subkey from the one root secret.
+
+    One-way: a leaked epoch subkey exposes neither the root key nor any other
+    epoch's subkey. Rotating ``ARIS_SALT`` itself invalidates every epoch's
+    derived subkey in one action, since they are all functions of it.
+    """
+    return hmac.new(master_key, f"aris-epoch:{epoch}".encode("ascii"), sha256).digest()
+
+
+def risk_id_for_account(
+    ifsc: str, account: str, key: bytes | None = None, *, epoch: int | None = None
+) -> str:
+    """Return ``HMAC-SHA256(epoch_subkey, length_prefixed(normalize(ifsc), normalize(account)))``
+    as lowercase hex, where ``epoch_subkey`` is derived from ``key`` for ``epoch``
+    (default: the current UTC day -- see ``current_epoch``, ``docs/SECURITY.md`` SS3.2).
+
+    Keyed on the ``(ifsc, account)`` pair, not the account alone: an account
+    number is unique only within its own bank, so two customers at different
+    banks can otherwise share a `risk_id` and a flag against one blocks the
+    other. See docs/SECURITY.md SS3.3.
     """
     if key is None:
         key = load_salt()
     elif len(key) < MIN_KEY_BYTES:
         raise ValueError(f"key must be at least {MIN_KEY_BYTES} bytes")
+    if epoch is None:
+        epoch = current_epoch()
+    epoch_key = _derive_epoch_key(key, epoch)
     material = _length_prefixed_material(normalize_ifsc(ifsc), normalize_account(account))
-    return hmac.new(key, material, sha256).hexdigest()
+    return hmac.new(epoch_key, material, sha256).hexdigest()

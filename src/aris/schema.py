@@ -15,6 +15,8 @@ from typing import Final
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from aris.hashing import current_epoch
+
 # A risk_id is the hex digest of a 256-bit MAC (see aris.hashing).
 RISK_ID_PATTERN: Final = re.compile(r"\A[0-9a-f]{64}\Z")
 
@@ -85,6 +87,11 @@ class RiskSignal(BaseModel):
     timestamp: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc), validate_default=True
     )
+    # Which key-rotation epoch risk_id was derived under (docs/SECURITY.md SS3.2).
+    # Without this, rotating the consortium key silently orphans every existing
+    # signal -- lookups miss, and a miss resolves to allow, with no error or
+    # alarm. validate_default=True for the same reason as timestamp above.
+    key_epoch: int = Field(default_factory=current_epoch, ge=0, validate_default=True)
 
     @field_validator("risk_id")
     @classmethod

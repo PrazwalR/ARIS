@@ -12,14 +12,15 @@ import threading
 import uuid
 from abc import ABC, abstractmethod
 from collections import OrderedDict, deque
+from collections.abc import Callable
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Final
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from aris.bus import RiskBus
-from aris.hashing import normalize_ifsc, risk_id_for_account
+from aris.bus import LookupResult, RiskBus
+from aris.hashing import current_epoch, normalize_ifsc, risk_id_for_account
 from aris.schema import Decision, LookupStatus, PolicyConfig, apply_policy
 
 logger = logging.getLogger(__name__)
@@ -238,6 +239,7 @@ class BankBot:
         policy: PolicyConfig | None = None,
         audit: AuditSink | None = None,
         replay_cache_size: int = DEFAULT_REPLAY_CACHE,
+        now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
     ) -> None:
         self.bus = bus
         self.policy = policy or PolicyConfig()
@@ -246,12 +248,56 @@ class BankBot:
         self._decided: OrderedDict[str, BankBotDecision] = OrderedDict()
         self._replay_cache_size = replay_cache_size
         self._lock = threading.Lock()
+        self._now = now
 
     def _remember(self, transfer_id: str, decision: BankBotDecision) -> None:
         with self._lock:
             self._decided[transfer_id] = decision
             while len(self._decided) > self._replay_cache_size:
                 self._decided.popitem(last=False)
+
+    def _lookup_receiver(
+        self, ifsc: str, account: str, transfer_id: str
+    ) -> tuple[str, LookupResult | None]:
+        """Look up ``(ifsc, account)`` under the current key epoch, falling
+        back to the previous one if the current epoch has nothing live.
+
+        Without this, a signal published just before a UTC-day boundary and
+        looked up just after it would derive a different risk_id purely from
+        crossing that boundary and would silently read as NOT_FOUND, which
+        resolves the same way an unflagged account does. See docs/SECURITY.md
+        SS3.2. Returns the risk_id the caller should report (for audit
+        continuity, always the *current* epoch's, even when the previous
+        epoch's signal is what was actually found) and the lookup result, or
+        ``None`` in place of the result to mean the bus itself is unavailable.
+        """
+        epoch_now = current_epoch(self._now())
+        primary_risk_id = risk_id_for_account(ifsc, account, epoch=epoch_now)
+        primary_result: LookupResult | None = None
+        for i, epoch in enumerate((epoch_now, epoch_now - 1)):
+            candidate_risk_id = (
+                primary_risk_id if i == 0 else risk_id_for_account(ifsc, account, epoch=epoch)
+            )
+            try:
+                result = self.bus.lookup(candidate_risk_id)
+            except Exception:
+                # An implementation is contracted to report UNAVAILABLE rather
+                # than raise, but a transport fault must never fail open, so
+                # an escaped exception is treated as an outage too. Reported
+                # under the current epoch's risk_id regardless of which
+                # attempt raised, for audit continuity.
+                logger.exception(
+                    "risk bus lookup failed for transfer %s risk_id=%s (epoch=%d)",
+                    transfer_id,
+                    candidate_risk_id,
+                    epoch,
+                )
+                return primary_risk_id, None
+            if i == 0:
+                primary_result = result
+            if result.status is LookupStatus.FOUND:
+                return candidate_risk_id, result
+        return primary_risk_id, primary_result
 
     def pre_transaction(self, req: TransferRequest) -> BankBotDecision:
         """Decide a transfer before any money moves.
@@ -268,16 +314,9 @@ class BankBot:
             logger.info("transfer=%s replayed; returning recorded decision", req.transfer_id)
             return seen
 
-        risk_id = risk_id_for_account(req.receiver_ifsc, req.receiver_account)
-
-        try:
-            result = self.bus.lookup(risk_id)
-        except Exception:
-            # An implementation is contracted to report UNAVAILABLE rather than
-            # raise, but a transport fault must never fail open, so an escaped
-            # exception is treated as an outage too.
-            logger.exception("risk bus lookup failed for transfer %s", req.transfer_id)
-            result = None
+        risk_id, result = self._lookup_receiver(
+            req.receiver_ifsc, req.receiver_account, req.transfer_id
+        )
 
         if result is None:
             status: LookupStatus = LookupStatus.UNAVAILABLE

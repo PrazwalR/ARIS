@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from decimal import Decimal
 
 import pytest
@@ -15,7 +16,7 @@ from aris.bankbot import (
     TransferRequest,
 )
 from aris.bus import InMemoryRiskBus, LookupResult, PublishOutcome, RiskBus
-from aris.hashing import risk_id_for_account
+from aris.hashing import current_epoch, risk_id_for_account
 from aris.schema import Decision, LookupStatus, PolicyConfig, RiskSignal
 
 ACCOUNT = "ACC-999"
@@ -157,6 +158,28 @@ class TestBusFailure:
     def test_outage_is_recorded_for_audit(self):
         audit = InMemoryAuditLog()
         BankBot(self.BrokenBus(), audit=audit).pre_transaction(request())
+        assert audit.entries[0].lookup_status is LookupStatus.UNAVAILABLE
+
+    class CountingBrokenBus(RiskBus):
+        def __init__(self) -> None:
+            self.lookups: list[str] = []
+
+        def publish(self, signed: SignedRiskSignal) -> PublishOutcome:
+            raise ConnectionError("bus down")
+
+        def lookup(self, risk_id: str) -> LookupResult:
+            self.lookups.append(risk_id)
+            raise ConnectionError("bus down")
+
+    def test_an_outage_is_not_retried_against_the_previous_epoch(self):
+        """Dual-epoch lookup (SS3.2) tries the previous epoch only when the
+        current one cleanly reports NOT_FOUND -- a real outage is the same
+        outage under any epoch, so retrying it would just be a second,
+        pointless failure."""
+        bus = self.CountingBrokenBus()
+        audit = InMemoryAuditLog()
+        BankBot(bus, audit=audit).pre_transaction(request())
+        assert len(bus.lookups) == 1
         assert audit.entries[0].lookup_status is LookupStatus.UNAVAILABLE
 
 
@@ -352,3 +375,83 @@ class TestIdempotency:
         for i in range(100):
             bot.pre_transaction(request(transfer_id=f"txn-{i:04d}"))
         assert len(bot._decided) == 10
+
+
+class TestKeyEpochRotation:
+    """docs/SECURITY.md SS3.2: risk_id is derived under a key epoch that
+    rotates daily, so lookups try the current epoch, then fall back to the
+    previous one -- a signal published just before a UTC-day boundary must
+    still be found just after it."""
+
+    def _flag(self, keyring: PublisherKeyring, bank_b: Publisher, epoch: int) -> InMemoryRiskBus:
+        bus = InMemoryRiskBus(keyring)
+        bus.publish(
+            bank_b.sign(
+                RiskSignal(
+                    risk_id=risk_id_for_account(IFSC, ACCOUNT, epoch=epoch),
+                    risk_score=92,
+                    confidence=0.94,
+                    reason_codes=("high_velocity",),
+                    model_version="v0.4-fl",
+                    source_bank_id="BANK-B",
+                    key_epoch=epoch,
+                    ttl_hours=168,
+                )
+            )
+        )
+        return bus
+
+    def test_a_signal_from_the_previous_epoch_is_still_found(self, keyring, bank_b):
+        real_now = datetime.now(timezone.utc)
+        epoch_today = current_epoch(real_now)
+        bus = self._flag(keyring, bank_b, epoch_today - 1)
+
+        audit = InMemoryAuditLog()
+        bot = BankBot(bus, audit=audit, now=lambda: real_now)
+        bot.pre_transaction(request())
+
+        assert audit.entries[0].decision is Decision.BLOCK
+        assert audit.entries[0].lookup_status is LookupStatus.FOUND
+
+    def test_a_signal_from_two_epochs_ago_is_not_found(self, keyring, bank_b):
+        """The accepted trade-off this design makes explicit: a signal beyond
+        the rotation window is unreachable via lookup even while its own
+        ttl_hours says it should still be live."""
+        real_now = datetime.now(timezone.utc)
+        epoch_today = current_epoch(real_now)
+        bus = self._flag(keyring, bank_b, epoch_today - 2)
+
+        audit = InMemoryAuditLog()
+        bot = BankBot(bus, audit=audit, now=lambda: real_now)
+        bot.pre_transaction(request())
+
+        assert audit.entries[0].decision is Decision.ALLOW
+        assert audit.entries[0].lookup_status is LookupStatus.NOT_FOUND
+
+    def test_the_current_epoch_is_tried_first(self, keyring, bank_b):
+        """When both epochs happen to have a live signal, the reported
+        risk_id is the current epoch's, not whichever was found first."""
+        real_now = datetime.now(timezone.utc)
+        epoch_today = current_epoch(real_now)
+        bus = InMemoryRiskBus(keyring)
+        for epoch in (epoch_today, epoch_today - 1):
+            bus.publish(
+                bank_b.sign(
+                    RiskSignal(
+                        risk_id=risk_id_for_account(IFSC, ACCOUNT, epoch=epoch),
+                        risk_score=92,
+                        confidence=0.94,
+                        reason_codes=("high_velocity",),
+                        model_version="v0.4-fl",
+                        source_bank_id="BANK-B",
+                        key_epoch=epoch,
+                        ttl_hours=168,
+                    )
+                )
+            )
+
+        audit = InMemoryAuditLog()
+        bot = BankBot(bus, audit=audit, now=lambda: real_now)
+        bot.pre_transaction(request())
+
+        assert audit.entries[0].risk_id == risk_id_for_account(IFSC, ACCOUNT, epoch=epoch_today)
