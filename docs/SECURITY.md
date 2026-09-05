@@ -90,13 +90,24 @@ beneficiary graph with timing and volume. Mitigation is cheap: send a short pref
 the `risk_id` and filter locally, so the operator sees a bucket of several hundred
 candidates rather than the one you wanted.
 
-### 3.5 A flagged account can self-identify — *medium*
+### 3.5 A flagged account can self-identify — *medium* — partially done
 
 A fraudster who controls a mule account can trigger a flag deliberately, watch the bus,
 and learn exactly which `risk_id` is theirs — no key and no compute required. Full-
 precision `timestamp` and unrounded `confidence` also act as linkage tags that survive
 key rotation. Mitigation: quantise timestamps, jitter publication, round `confidence`,
 and bucket scores.
+
+**Done:** `RiskSignal.timestamp` is floored to a 1-minute bucket and `confidence` is
+rounded to the nearest 0.05, both at construction time (`aris/schema.py`,
+`TIMESTAMP_BUCKET` / `CONFIDENCE_BUCKET`), so neither field survives on the bus at
+finer precision than that regardless of publisher behavior. Trade-off, stated in the
+code: two genuine re-assessments of the same account by the same bank within one
+minute now collapse to the same effective time, and the replay guard treats the
+second as no newer than the first.
+
+**Not done:** publication jitter and `risk_score` bucketing — `risk_score` is still
+published at full 0–100 resolution.
 
 ### 3.6 The key lives in an environment variable — *medium*
 
@@ -147,15 +158,15 @@ top that limits blast radius and enables clean revocation, and it does not exist
 
 ## 4. Priority order
 
-| # | Change | Addresses | Effort |
-| --- | --- | --- | --- |
-| 1 | `key_epoch` + per-epoch canary | 3.2 | 0.5 d |
-| 2 | Key on `(IFSC, account)`, length-prefixed | 3.3 | 0.5 d |
-| 3 | Prefix-bucket lookup | 3.4 | 0.5 d |
-| 4 | Quantise timestamp, round confidence | 3.5 | 1 h |
-| 5 | OPRF-derived `risk_id` | 3.1 | 3–5 d |
-| 6 | HSM-resident key | 3.6 | 2–3 d |
-| 7 | mTLS + per-bank Kafka ACLs | 3.8 | 1–2 d |
+| # | Change | Addresses | Effort | Status |
+| --- | --- | --- | --- | --- |
+| 1 | `key_epoch` + per-epoch canary | 3.2 | 0.5 d | open |
+| 2 | Key on `(IFSC, account)`, length-prefixed | 3.3 | 0.5 d | open |
+| 3 | Prefix-bucket lookup | 3.4 | 0.5 d | open |
+| 4 | Quantise timestamp, round confidence | 3.5 | 1 h | ✅ done (jitter, score bucketing still open) |
+| 5 | OPRF-derived `risk_id` | 3.1 | 3–5 d | open |
+| 6 | HSM-resident key | 3.6 | 2–3 d | open |
+| 7 | mTLS + per-bank Kafka ACLs | 3.8 | 1–2 d | open |
 
 Items 1–4 are independent of the OPRF and worth doing regardless. If item 5 is out of
 reach, HSM-resident HMAC plus daily epochs gets most of the benefit with no new

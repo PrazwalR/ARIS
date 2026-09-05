@@ -70,8 +70,11 @@ class TestTransfersEndpoint:
         assert body["decision"] == "block"
         assert "score" not in body["user_message"].lower()
         assert body["step_up_required"] is False
-        # No score oracle over HTTP either.
-        assert "92" not in str(body)
+        # No score oracle over HTTP either -- checked on the fields that could
+        # actually carry it, not the whole body: audit_ref is a random UUID
+        # and can coincidentally contain "92" as a substring.
+        assert "92" not in body["user_message"]
+        assert set(body) == {"decision", "user_message", "audit_ref", "step_up_required"}
 
     def test_unflagged_account_is_allowed(self, keyring):
         bus = InMemoryRiskBus(keyring)

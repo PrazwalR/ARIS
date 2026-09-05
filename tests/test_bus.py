@@ -100,8 +100,13 @@ class TestHostilePublisher:
 
     def test_a_bank_can_revise_its_own_assessment_downward(self, keyring, bank_b):
         bus = InMemoryRiskBus(keyring)
-        bus.publish(bank_b.sign(signal(score=92)))
-        bus.publish(bank_b.sign(signal(score=10)))
+        now = datetime.now(timezone.utc)
+        # >1 timestamp bucket apart: see schema.TIMESTAMP_BUCKET's documented
+        # trade-off -- two publishes landing in the same minute bucket would
+        # collapse to the same effective time and the second would (correctly)
+        # read as no newer, which is not what this test means to exercise.
+        bus.publish(bank_b.sign(signal(score=92, ts=now)))
+        bus.publish(bank_b.sign(signal(score=10, ts=now + timedelta(minutes=2))))
         assert bus.lookup(RID).score == 10
 
     def test_stale_republish_is_rejected(self, keyring, bank_b):
@@ -285,9 +290,12 @@ class TestReplayGuardDurability:
         for eviction, so the policy actively selected the guards worth destroying.
         """
         bus = InMemoryRiskBus(keyring, max_entries=3, max_publisher_share=1.0)
-        captured = bank_b.sign(signal(risk_id=RID, score=99, ttl=168))
+        now = datetime.now(timezone.utc)
+        captured = bank_b.sign(signal(risk_id=RID, score=99, ttl=168, ts=now))
         bus.publish(captured)
-        bus.publish(bank_b.sign(signal(risk_id=RID, score=0, ttl=168)))
+        bus.publish(
+            bank_b.sign(signal(risk_id=RID, score=0, ttl=168, ts=now + timedelta(minutes=2)))
+        )
         assert bus.lookup(RID).score == 0
 
         assert bus.publish(captured) is PublishOutcome.STALE
@@ -314,7 +322,11 @@ class TestClockSkewAbuse:
         bus.publish(bank_b.sign(signal(score=0, ts=start + timedelta(minutes=4))))
         assert bus.lookup(RID).score == 0
 
-        clock["now"] = start + timedelta(seconds=1)
+        # >1 timestamp bucket after `start` (not +1s): the schema quantises
+        # signal.timestamp to the minute *before* the bus ever clamps it, so a
+        # gap inside one bucket isn't reliably distinguishable from the first
+        # publish's clamped-to-arrival-time high water mark. See TIMESTAMP_BUCKET.
+        clock["now"] = start + timedelta(minutes=2)
         outcome = bus.publish(bank_b.sign(signal(score=95, ts=clock["now"])))
         assert outcome is PublishOutcome.ACCEPTED
         assert bus.lookup(RID).score == 95

@@ -33,6 +33,23 @@ MAX_TTL_HOURS: Final = 168  # 7 days; also keeps expiry arithmetic in range.
 # this is rejected, otherwise a publisher could mint an effectively immortal one.
 MAX_CLOCK_SKEW: Final = timedelta(minutes=5)
 
+# Full-precision timestamp and unrounded confidence act as linkage tags: a
+# fraudster who controls a flagged mule account can watch the bus, and a
+# publish timestamp precise to the millisecond (or a confidence like
+# 0.9412357) lets them correlate *this* signal to a specific event even across
+# a consortium key rotation, which changes risk_id but not these fields. See
+# docs/SECURITY.md SS3.5. Both are quantised at construction time, not left to
+# publisher convention, so the bus never carries the finer-grained originals.
+#
+# Trade-off, stated explicitly: quantising the timestamp means two genuine
+# re-assessments of the same account by the same bank within one bucket
+# collapse to the same effective time, and aris.bus's replay guard (which
+# compares effective timestamps) will treat the second as no newer than the
+# first. One minute is short relative to the TTL range (1-168 hours), so this
+# should be rare in practice, but it is a real behavior change, not a no-op.
+CONFIDENCE_BUCKET: Final = 0.05
+TIMESTAMP_BUCKET: Final = timedelta(minutes=1)
+
 # Canonical vocabulary. Publishers may use other codes that match _TOKEN_PATTERN;
 # these are the ones BankBot and the analyst tooling understand.
 NEW_BENEFICIARY: Final = "new_beneficiary"
@@ -59,7 +76,15 @@ class RiskSignal(BaseModel):
     model_version: str
     source_bank_id: str
     ttl_hours: int = Field(default=24, ge=MIN_TTL_HOURS, le=MAX_TTL_HOURS)
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    # validate_default=True: pydantic v2 otherwise skips field_validators for a
+    # value that came from default_factory. Without this, a signal built with
+    # no explicit timestamp is signed *unquantised*, and the identical signal
+    # re-parsed later (e.g. off the Kafka wire, where timestamp is now an
+    # explicit JSON field) comes out quantised -- a different value than what
+    # was signed, so canonical_bytes no longer matches and verification fails.
+    timestamp: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc), validate_default=True
+    )
 
     @field_validator("risk_id")
     @classmethod
@@ -77,6 +102,15 @@ class RiskSignal(BaseModel):
         if len(set(value)) != len(value):
             raise ValueError("reason_codes must not contain duplicates")
         return value
+
+    @field_validator("confidence")
+    @classmethod
+    def _bucket_confidence(cls, value: float) -> float:
+        # Round-half-to-even at the bucket boundary is fine here: this is
+        # anti-fingerprinting, not a threshold decision that needs a specific
+        # rounding direction the way apply_policy's score comparisons do.
+        bucketed = round(value / CONFIDENCE_BUCKET) * CONFIDENCE_BUCKET
+        return round(min(max(bucketed, 0.0), 1.0), 2)
 
     @field_validator("source_bank_id")
     @classmethod
@@ -99,7 +133,15 @@ class RiskSignal(BaseModel):
         # raise deep inside expiry checking instead of here at the boundary.
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError("timestamp must be timezone-aware (UTC)")
-        return value.astimezone(timezone.utc)
+        value = value.astimezone(timezone.utc)
+        # Quantise to TIMESTAMP_BUCKET (floor, never round up): flooring can
+        # only make a signal look *older* than it truly is, which is the safe
+        # direction for both the future-timestamp check below and for TTL
+        # expiry (expires_at is computed from this already-floored value, so
+        # quantisation never extends a signal's effective lifetime).
+        bucket_s = TIMESTAMP_BUCKET.total_seconds()
+        floored_epoch = (value.timestamp() // bucket_s) * bucket_s
+        return datetime.fromtimestamp(floored_epoch, tz=timezone.utc)
 
     @model_validator(mode="after")
     def _reject_future_timestamp(self) -> RiskSignal:
