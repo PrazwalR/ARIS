@@ -204,24 +204,31 @@ attribution through `RiskSignal`'s own token validator to an actual BankBot
 - Load test the bus -- **done.** `src/aris/loadtest.py`, measured against
   both `InMemoryRiskBus` and a live `KafkaRiskBus`: see
   [`docs/LOADTEST.md`](LOADTEST.md) for numbers, and known limits.
-- SECURITY.md hardening -- **done: §3.2, §3.3, §3.4, §3.5** (of the 7-item
-  priority list; §3.1, §3.6, §3.8 remain open). §3.4 in particular re-scoped
-  `KafkaRiskBus` from full-topic replication to prefix-bucketed consumption
-  -- see the README M6+ phase log and `docs/SECURITY.md` §3.4 for what that
-  actually closed and what it cost.
+- SECURITY.md hardening -- **done: §3.1, §3.2, §3.3, §3.4, §3.5, §3.8** (of
+  the 7-item priority list; only §3.6, HSM-resident key, remains open, for
+  lack of hardware to build or verify it against). §3.4 re-scoped
+  `KafkaRiskBus` from full-topic replication to prefix-bucketed consumption;
+  §3.1 built an RSA-FDH blind signature (not a literal RFC 9497 OPRF, and
+  not wired into `risk_id_for_account`'s call sites); §3.8 added an mTLS +
+  per-principal-ACL Kafka listener alongside the original plaintext one --
+  see the README M6+ phase log and each section of `docs/SECURITY.md` for
+  what actually closed and what each one cost.
 
 **Done when:** Documented limits and attack notes for a report/defense.
-Partially met -- robust aggregation, the load test, and four SECURITY.md
-hardening items all have real, measured, documented results; graph/velocity
-features remain open, and so does the mTLS/ACL hardening `docs/SECURITY.md`
-§3.8 already flags.
+Largely met -- robust aggregation, the load test, and six of seven
+SECURITY.md priority-list items all have real, measured, documented
+results, several verified against a live broker rather than just
+configured; graph/velocity features remain open, and so does §3.6
+(HSM-resident key).
 
 ---
 
 ## Suggested next session
 
-**M0–M5 are done; M6+ is partial** (robust aggregation and bus load testing
-shipped; graph/velocity features and mTLS/ACL hardening remain). Next: AI-2
+**M0–M5 are done; M6+ is largely done** (robust aggregation, bus load
+testing, and six of seven SECURITY.md priority items shipped; only
+graph/velocity features and §3.6's HSM-resident key remain). Next: AI-2
 graph/velocity features (needs new synthetic transaction-history generation
-first); Backend the mTLS/ACL hardening flagged in `docs/SECURITY.md` §3.8.
-When a phase closes, append what shipped to the Phase log in `README.md`.
+first) -- §3.6 is not realistically buildable further without actual HSM
+hardware. When a phase closes, append what shipped to the Phase log in
+`README.md`.

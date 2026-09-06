@@ -43,11 +43,12 @@ import logging
 import os
 import threading
 import time
+from dataclasses import dataclass
 from typing import Any, Final
 
 from kafka import KafkaConsumer, KafkaProducer, TopicPartition
 from kafka.admin import KafkaAdminClient, NewTopic
-from kafka.errors import KafkaError, TopicAlreadyExistsError
+from kafka.errors import KafkaError, TopicAlreadyExistsError, TopicAuthorizationFailedError
 from kafka.serializer import Deserializer, Serializer
 
 from aris.attestation import PublisherKeyring, SignatureInvalid, SignedRiskSignal, UnknownPublisher
@@ -110,11 +111,37 @@ class KafkaPublishError(Exception):
     """
 
 
+@dataclass(frozen=True)
+class KafkaTlsConfig:
+    """mTLS client identity for the SSL listener (docs/SECURITY.md SS3.8):
+    ``ca_file`` authenticates the broker to this client; ``cert_file`` /
+    ``key_file`` authenticate this bank to the broker. The certificate's CN
+    is what the broker's ``ssl.principal.mapping.rules`` maps to a bare
+    principal (e.g. ``BANK-B``), and what ``scripts/setup_kafka_acls.sh``'s
+    grants and Kafka's authorizer both key on -- get the wrong bank's cert
+    here and the broker enforces that mismatch, it does not trust this
+    class's own idea of who it is.
+    """
+
+    ca_file: str
+    cert_file: str
+    key_file: str
+
+    def kafka_python_kwargs(self) -> dict[str, Any]:
+        return {
+            "security_protocol": "SSL",
+            "ssl_cafile": self.ca_file,
+            "ssl_certfile": self.cert_file,
+            "ssl_keyfile": self.key_file,
+        }
+
+
 def ensure_topic(
     bootstrap_servers: str,
     topic: str = DEFAULT_TOPIC,
     num_partitions: int = PREFIX_BUCKET_PARTITIONS,
     replication_factor: int = 1,
+    tls: KafkaTlsConfig | None = None,
 ) -> None:
     """Create the risk-signals topic with log compaction enabled, if it does not
     already exist. Idempotent -- safe to call from every process on startup.
@@ -129,8 +156,19 @@ def ensure_topic(
     so a topic created under an old partition count (e.g. before
     PREFIX_BUCKET_PARTITIONS existed) would otherwise fail confusingly deep
     inside produce/assign calls instead of here, at the boundary.
+
+    Under SS3.8's per-principal ACLs, an individual bank's own identity is
+    not expected to hold Create on this topic at all -- provisioning it is
+    an operator action (`scripts/setup_kafka_acls.sh`'s prerequisite), not
+    something every bank's own process needs rights to do. `create_topics`
+    then fails with `TopicAuthorizationFailedError`, not
+    `TopicAlreadyExistsError` -- Kafka checks authorization before
+    existence -- so that is caught here too, falling through to the same
+    describe-and-verify path.
     """
-    admin = KafkaAdminClient(bootstrap_servers=bootstrap_servers)
+    admin = KafkaAdminClient(
+        bootstrap_servers=bootstrap_servers, **(tls.kafka_python_kwargs() if tls else {})
+    )
     try:
         try:
             admin.create_topics(
@@ -144,7 +182,7 @@ def ensure_topic(
                 ]
             )
             return
-        except TopicAlreadyExistsError:
+        except (TopicAlreadyExistsError, TopicAuthorizationFailedError):
             pass
         (described,) = admin.describe_topics([topic])
         actual = len(described["partitions"])
@@ -219,21 +257,24 @@ class KafkaRiskBus(RiskBus):
         max_entries: int = DEFAULT_MAX_ENTRIES,
         max_publisher_share: float = DEFAULT_MAX_PUBLISHER_SHARE,
         lookup_timeout_s: float = _LOOKUP_WARMUP_TIMEOUT_S,
+        tls: KafkaTlsConfig | None = None,
     ) -> None:
         self._topic = topic
         self._lookup_timeout_s = lookup_timeout_s
         self._local = InMemoryRiskBus(
             keyring, max_entries=max_entries, max_publisher_share=max_publisher_share
         )
-        ensure_topic(bootstrap_servers, topic=topic)
+        ensure_topic(bootstrap_servers, topic=topic, tls=tls)
         registry = SchemaRegistryClient(schema_registry_url)
         self._schema_id = registry.register(SCHEMA_SUBJECT, RiskSignal.model_json_schema())
 
+        tls_kwargs = tls.kafka_python_kwargs() if tls else {}
         self._producer = KafkaProducer(
             bootstrap_servers=bootstrap_servers,
             key_serializer=_Utf8KeySerializer(),
             value_serializer=_SchemaWireValueSerializer(self._schema_id),
             acks="all",
+            **tls_kwargs,
         )
         # No consumer group and no topic-level subscribe(): partitions are
         # assigned manually, one bucket at a time, as publish()/lookup() need
@@ -247,6 +288,7 @@ class KafkaRiskBus(RiskBus):
             key_deserializer=_Utf8KeyDeserializer(),
             value_deserializer=_PassthroughValueDeserializer(),
             consumer_timeout_ms=200,
+            **tls_kwargs,
         )
         # Guards _wanted (buckets a caller has asked for) and _ready (buckets
         # caught up to their catch-up snapshot at least once); _catch_up_target

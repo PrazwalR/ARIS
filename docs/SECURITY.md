@@ -40,7 +40,7 @@ Adversaries we design against, in rough order of likelihood:
 
 ## 3. Known limitations — accepted for M0
 
-### 3.1 Pseudonymity does not hold against a member bank — *critical, by construction*
+### 3.1 Pseudonymity does not hold against a member bank — *critical, by construction* — done (not wired in)
 
 `risk_id` is a keyed hash of a low-entropy input, and every member holds the key. On
 the order of 10⁹ live accounts can be enumerated offline on one GPU in well under a
@@ -61,6 +61,27 @@ unbounded, silent, retroactive compromise into a bounded, logged, prospective on
 **This is the honest version of the project's novelty claim, and it is a stronger one:**
 the contribution is not "we hash the account number" — that is neither novel nor sound —
 but a bus design whose privacy failure mode is explicit and bounded.
+
+**Done, but not a literal RFC 9497 implementation, and not wired in:** `aris/oprf.py`
+builds an RSA-FDH blind signature (Chaum 1982, full-domain hash per RFC 8017 §B.2.1's
+MGF1) instead of an RFC 9497 Diffie-Hellman OPRF. Checked before writing anything: the
+`pynacl` build available in this environment has no ristretto255 bindings; raw
+edwards25519 has cofactor 8 and needs every scalar multiplication clamped to avoid
+small-subgroup attacks; `cryptography`'s ECDH only returns X-coordinates, not enough
+for a multi-round blind/evaluate/unblind protocol needing full points at each step.
+RSA-FDH closes the same gap through the same shape of protocol — `OprfAuthority` holds
+the private key, `risk_id_for_account_oprf` blinds a query so the authority never learns
+`(ifsc, account)`, rate-limits and logs per bank, and the client verifies the response
+against the authority's own public key (`OprfVerificationError` if it doesn't match) —
+and is `tests/test_oprf.py`-verified: determinism across independent sessions, blinding
+unlinkability, a misbehaving-authority key mismatch actually being caught, rate limits
+enforced and independent per bank, and a bounded audit log. **Not wired into
+`BankBot`/`KafkaRiskBus`/the demo** — `risk_id_for_account` (HMAC-based, §3.2's daily
+epochs already applied) is still what they use. Swapping it in touches
+`TransferRequest`, every publisher call site, and most of the existing test suite, and
+RSA-2048 modular exponentiation is real added latency per lookup on top of whatever the
+authority's own network round trip costs — a decision for whoever reviews this module,
+not made here.
 
 ### 3.2 No key rotation support — *high* — done
 
@@ -188,7 +209,7 @@ falls to off-the-shelf tooling.
 but it accumulates a ready-made mapping for every account a bank's customers pay. Needs
 encryption at rest, a named investigations role, and a retention limit.
 
-### 3.8 The Kafka bus (M3) has no transport authentication — *high*
+### 3.8 The Kafka bus (M3) has no transport authentication — *high* — done
 
 `docker-compose.yml`'s broker and Schema Registry run `PLAINTEXT`, with no SASL, no
 mTLS, and no ACLs. `KafkaRiskBus` still enforces the same Ed25519 signature check as
@@ -216,6 +237,43 @@ integrity even against a dishonest transport, the way HMAC already produces a
 pseudonymous ID even without an OPRF. Transport-level access control is the layer on
 top that limits blast radius and enables clean revocation, and it does not exist yet.
 
+**Done, verified against the live broker, not just configured:** `docker-compose.yml`
+now serves a second listener, `SSL_HOST` (`:9093`), alongside the original plaintext
+`PLAINTEXT_HOST` (`:9092`) — `KAFKA_SSL_CLIENT_AUTH=required` (mTLS: the broker rejects
+any connection that doesn't present a certificate, confirmed directly —
+`test_a_client_with_no_certificate_at_all_cannot_connect`), `KAFKA_AUTHORIZER_CLASS_NAME
+=StandardAuthorizer` with per-principal ACLs granted via `scripts/setup_kafka_acls.sh`
+(the exact `kafka-acls.sh` invocation this section already named), and
+`KAFKA_SSL_PRINCIPAL_MAPPING_RULES` mapping a client certificate's CN straight to a bare
+principal (`CN=BANK-B` → `BANK-B`) so ACL grants and `aris.kafka_bus.KafkaTlsConfig`'s
+identity agree. `scripts/generate_dev_certs.py` generates a local CA and per-bank
+client certs (dev-only, stated plainly in its own docstring: unencrypted keys, CA key
+sitting next to the leaf keys it signs, no revocation). `KafkaRiskBus`/`ensure_topic`
+both take an optional `tls: KafkaTlsConfig` now.
+
+`tests/test_kafka_mtls.py` verifies, against the real broker: an authorized bank
+(`User:BANK-B`, granted Write) publishes and looks up over mTLS end to end; a bank with
+a *valid* certificate but no Write ACL (`BANK-EVIL` — the broker's authorizer, not the
+TLS handshake, is what rejects it — confirmed by first checking the raw handshake
+alone succeeds, then that the Kafka-protocol-level operation still fails); an
+unauthorized bank can still *read* (the Read ACL is granted broadly — SS3.8 restricts
+who may publish, not who may consume the compacted topic to build a local view); and
+`ensure_topic` still succeeds for a bank holding no Create permission at all, once a
+real bug this surfaced was fixed — `create_topics` against an *already-existing* topic
+raises `TopicAuthorizationFailedError`, not `TopicAlreadyExistsError`, when the caller
+lacks Create (Kafka checks authorization before existence), which the pre-ACL code did
+not handle.
+
+**Trade-off, stated explicitly:** the authorizer applies broker-wide, not per-listener,
+so `PLAINTEXT_HOST` staying fully open (`User:ANONYMOUS` is a super user) is deliberate,
+not an oversight — it is what lets the pre-existing non-TLS test suite
+(`tests/test_kafka_bus.py`, `tests/test_api_kafka.py`, `tests/test_kafka_bus_bucketing.py`)
+keep running with no certs at all. A real deployment enabling this would close the
+plaintext listener entirely rather than run both side by side.
+
+**Not extended to the Schema Registry.** Karapace's REST API is still plain HTTP;
+`docker-compose.yml`'s Kafka listener is the only leg this closes.
+
 ## 4. Priority order
 
 | # | Change | Addresses | Effort | Status |
@@ -224,15 +282,19 @@ top that limits blast radius and enables clean revocation, and it does not exist
 | 2 | Key on `(IFSC, account)`, length-prefixed | 3.3 | 0.5 d | ✅ done |
 | 3 | Prefix-bucket lookup | 3.4 | 0.5 d (actual: re-scoped, ~1 d) | ✅ done |
 | 4 | Quantise timestamp, round confidence | 3.5 | 1 h | ✅ done (jitter, score bucketing still open) |
-| 5 | OPRF-derived `risk_id` | 3.1 | 3–5 d | open |
+| 5 | OPRF-derived `risk_id` | 3.1 | 3–5 d | ✅ done (RSA-FDH, not RFC 9497; not wired in) |
 | 6 | HSM-resident key | 3.6 | 2–3 d | open |
-| 7 | mTLS + per-bank Kafka ACLs | 3.8 | 1–2 d | open |
+| 7 | mTLS + per-bank Kafka ACLs | 3.8 | 1–2 d | ✅ done |
 
-Items 1–4 are independent of the OPRF and worth doing regardless. If item 5 is out of
-reach, HSM-resident HMAC plus daily epochs gets most of the benefit with no new
-cryptography — the remaining gap is that each bank then rate-limits *itself*, whereas
-an OPRF puts that limit in a counterparty's hands. That difference is the difference
-between a control and a promise.
+Items 1–4 were independent of the OPRF and worth doing regardless — all four, plus item
+5 (§3.1's blind-signature construction) and item 7 (§3.8's mTLS/ACLs), are now done. If
+item 5's actual output were never wired into `risk_id_for_account`'s call sites (it
+isn't yet — see §3.1), HSM-resident HMAC plus daily epochs gets most of the same
+benefit with no new cryptography — the remaining gap is that each bank then
+rate-limits *itself*, whereas an OPRF-style authority puts that limit in a
+counterparty's hands. That difference is the difference between a control and a
+promise. Only item 6 (HSM-resident key) remains genuinely open, for lack of hardware
+to build and verify it against.
 
 ## 5. Reporting
 

@@ -167,16 +167,27 @@ Writes `data/processed/m1_metrics_synthetic.json` (single run, `privacy.differen
 
 **Updated in M6+ (SECURITY.md §3.4):** the paragraph above described M3 as shipped -- full-topic replication, so `lookup()` never blocked on the network. That closed one leak (a bus operator correlating per-query traffic) by opening a bigger one: every member bank's consumer downloaded every *other* bank's complete published `risk_id` set, not just the accounts it actually queried. `KafkaRiskBus` now partitions the topic by `risk_id` prefix and each instance consumes only the buckets it has actually needed -- see the M6+ phase log below for what that trades away (a cold lookup now costs a real network round trip, bounded and reported as `UNAVAILABLE` on timeout rather than silently).
 
-**Message authenticity survives the transport.** A record that doesn't verify -- forged, or written directly to the topic bypassing `publish()` -- is rejected on consume the same way it would be on publish, by every reader independently. Transport-level access control (mTLS, per-bank ACLs) is a separate, still-open gap; see `docs/SECURITY.md` §3.8.
+**Message authenticity survives the transport.** A record that doesn't verify -- forged, or written directly to the topic bypassing `publish()` -- is rejected on consume the same way it would be on publish, by every reader independently.
+
+**Updated in M6+ (SECURITY.md §3.8):** transport-level access control (mTLS, per-bank ACLs) was a separate, open gap at M3 -- `docker-compose.yml` now also serves an `SSL_HOST` listener with mTLS and per-principal ACLs alongside the original plaintext one. See the M6+ phase log below for what that closes, the trade-offs it makes, and how to run it.
 
 Tests: `tests/test_kafka_bus.py` — cross-process visibility, forged-publisher rejection, replay-after-consume, and consumer resilience to an untrusted record — **verified passing against a live broker** (`docker compose up -d`, then `pytest tests/test_kafka_bus.py`: 5 passed). Skips cleanly with a clear reason, not silently, when no broker is reachable — e.g. in CI, which does not run Kafka.
 
 #### How to run M3
 
 ```bash
-docker compose up -d          # Kafka + Schema Registry, local dev only (no TLS/ACLs)
+docker compose up -d          # Kafka + Schema Registry
 pip install -e ".[dev,kafka]"
 pytest tests/test_kafka_bus.py -v
+```
+
+For the mTLS + per-bank ACL listener M6+ adds (`docs/SECURITY.md` §3.8):
+
+```bash
+python scripts/generate_dev_certs.py    # local dev CA + per-bank certs, gitignored
+docker compose up -d                    # now serves SSL_HOST on :9093 too
+bash scripts/setup_kafka_acls.sh        # optional -- tests/test_kafka_mtls.py grants its own
+pytest tests/test_kafka_mtls.py -v
 ```
 
 ### M4 — BankBot API (completed)
@@ -244,16 +255,18 @@ pytest tests/test_fl_explain.py tests/test_fl_drift.py tests/test_fl_registry.py
 
 **Bus load test, measured on both backends.** 20 concurrent publishers/lookups against `InMemoryRiskBus`: **3,517 signals/s**, 0 lost updates, lookup latency pinned near zero. 10 against a live `KafkaRiskBus`: **564 signals/s** (dominated by `acks="all"`'s broker round trip — the right tradeoff for a fraud signal), 0 lost updates; lookup latency is no longer flat zero (mean 8.1ms, p99 448ms) since SS3.4's prefix-bucketed consumption (below) means a lookup against a bucket this instance hasn't warmed yet pays a real, bounded network round trip rather than reading an already-fully-replicated local view. Quota enforcement verified exact under concurrent contention (10 publishers × 20 signals against a 50-entry cap admits exactly 50, rejects exactly 150, every run). Full numbers, tail-latency analysis, and known limits: [`docs/LOADTEST.md`](docs/LOADTEST.md).
 
-**Also shipped: SECURITY.md items 3.2, 3.3, 3.4, 3.5** (of the 7-item priority list in §4 — 1, 6, 7 remain open).
+**Also shipped: SECURITY.md items 3.1, 3.2, 3.3, 3.4, 3.5, 3.8** (of the 7-item priority list in §4 — only 3.6, HSM-resident key, remains open).
 
 - **3.5 — quantised timestamp, rounded confidence.** `RiskSignal.timestamp` floors to a 1-minute bucket and `confidence` rounds to the nearest 0.05 at construction, so neither survives on the bus as a linkage tag precise enough to correlate a signal to a specific real-world event.
 - **3.3 — `risk_id` keyed on `(IFSC, account)`.** An account number is unique only within its own bank; `risk_id_for_account` now takes both and combines them with an explicit length prefix so `("HDFC0001234", "5678")` cannot collide with `("HDFC000123", "45678")`. Breaking change: `POST /transfers` now requires `receiver_ifsc`.
 - **3.2 — daily key-rotation epochs + canary.** `risk_id` is derived under an HMAC subkey for the current UTC day, itself a one-way function of `ARIS_SALT` — a leaked day's subkey exposes neither the root key nor any other day's. `BankBot` looks up the current epoch, then falls back to the previous one, so a signal published just before a UTC-day boundary is still found just after it. `aris/canary.py` publishes and checks a reserved per-epoch marker signal so a node whose key has drifted out of sync fails one well-known check instead of silently missing every real signal.
 - **3.4 — prefix-bucketed Kafka consumption, re-scoped from what was written.** SS3.4 originally targeted a query-response bus leaking per-query traffic to the operator; M3 shipped full-topic replication instead, which avoided that but leaked something the doc never named — every member bank's consumer downloaded every *other* bank's complete published `risk_id` set. `KafkaRiskBus` now partitions `risk-signals` into 256 buckets by `risk_id` prefix and each instance consumes only the buckets it has actually published to or looked up, verified directly (`tests/test_kafka_bus_bucketing.py`) by confirming an instance that never asks about a bucket does not have its data. Costs real, bounded lookup latency on a cold bucket in exchange — see the load test numbers above and `docs/SECURITY.md` §3.4 for the trade-off stated in full.
+- **3.1 — OPRF-equivalent `risk_id` derivation.** `aris/oprf.py`: an RSA-FDH blind signature (Chaum 1982 + MGF1 full-domain hash), not a literal RFC 9497 DH-OPRF — see the module docstring for why (no ristretto255 in the available `pynacl` build, raw ed25519's cofactor-8 group needs careful clamping, `cryptography`'s ECDH only exposes X-coordinates). A bank cannot compute `risk_id` without the authority's per-query cooperation, which is blinded, rate-limited per bank, and logged, and the authority's response is self-verifiable against its own public key. Not wired into `BankBot`/`KafkaRiskBus`/the demo — `risk_id_for_account` (HMAC-based) is still what they use; swapping it in is a decision left for later, not made here.
+- **3.8 — mTLS + per-bank Kafka ACLs.** `docker-compose.yml` now serves an `SSL_HOST` listener (`:9093`) alongside the original plaintext one: `scripts/generate_dev_certs.py` generates a local CA + per-bank client certs, the broker requires a client certificate (`ssl.client.auth=required`) and maps its CN to a bare principal, and `StandardAuthorizer` enforces per-principal ACLs (`scripts/setup_kafka_acls.sh`). Verified end to end against the live broker (`tests/test_kafka_mtls.py`): an authorized bank publishes and looks up over mTLS; a bank with a valid certificate but no Write ACL is rejected by the authorizer (not the handshake); a client presenting no certificate at all cannot connect. The plaintext listener stays open (`User:ANONYMOUS` is a super user) specifically so the pre-existing non-TLS test suite needs no certs to run — a real deployment enabling this would close it instead, not run both side by side.
 
-**Not yet done:** graph/receiver-velocity features (needs account-level transaction *history*, which none of this repo's datasets have — a real gap, not a feature-engineering afterthought), the mTLS/Kafka-ACL hardening `docs/SECURITY.md` §3.8 already flags, and SECURITY.md items 3.1 (OPRF) and 3.6 (HSM-resident key).
+**Not yet done:** graph/receiver-velocity features (needs account-level transaction *history*, which none of this repo's datasets have — a real gap, not a feature-engineering afterthought) and SECURITY.md item 3.6 (HSM-resident key — no HSM hardware available, and a software stand-in like SoftHSM2 would only demonstrate a PKCS#11 call pattern, not close a real gap).
 
-Tests: full suite — **284 passed** (includes `tests/test_fl_robust_agg.py`, `tests/test_loadtest.py`, `tests/test_hashing.py`, `tests/test_bankbot.py`, `tests/test_canary.py`, `tests/test_kafka_bus_bucketing.py`).
+Tests: full suite — **316 passed** (includes `tests/test_fl_robust_agg.py`, `tests/test_loadtest.py`, `tests/test_hashing.py`, `tests/test_bankbot.py`, `tests/test_canary.py`, `tests/test_kafka_bus_bucketing.py`, `tests/test_oprf.py`, `tests/test_kafka_mtls.py`).
 
 #### How to run
 
