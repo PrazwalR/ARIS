@@ -103,18 +103,18 @@ Shipped: `FraudExplainer` (SHAP → `reason_codes`, `src/aris/fl/explain.py`),
 ### M6+ Scale — **in progress**
 
 Shipped: robust aggregation (`src/aris/fl/robust_agg.py`), a bus load test
-(`src/aris/loadtest.py`, results in `docs/LOADTEST.md`), and SECURITY.md
-hardening §3.1/§3.2/§3.3/§3.4/§3.5/§3.8 (`aris/hashing.py`, `aris/canary.py`,
-`aris/oprf.py`, `aris/bankbot.py`, `aris/kafka_bus.py`, `docker-compose.yml`,
-`scripts/`). Not started: graph/velocity features (blocked on new synthetic
-transaction-history data -- no current dataset has one) and the HSM-resident
-key (§3.6, no HSM hardware to build or verify it against).
+(`src/aris/loadtest.py`, results in `docs/LOADTEST.md`), and all 7
+SECURITY.md priority-list items -- §3.6 (`aris/hsm.py`) is the last, closed
+against SoftHSM2 (a real PKCS#11 software token) with a stated hardware gap:
+no HSM was available to verify against. Not started: graph/velocity features
+(blocked on new synthetic transaction-history data -- no current dataset has
+one) -- the only item left open across M6+ and SECURITY.md both.
 
 | Person | Tasks |
 | --- | --- |
 | **AI-1 (lead)** | Robust aggregation (Krum/median) -- done; more banks -- not started |
 | **AI-2** | On-prem graph / velocity features -- not started |
-| **Backend** | Bus load test -- done; SECURITY.md §3.1/§3.2/§3.3/§3.4/§3.5/§3.8 -- done; HSM hardening (§3.6) -- not started |
+| **Backend** | Bus load test -- done; all 7 SECURITY.md priority items -- done |
 
 ---
 
@@ -124,7 +124,7 @@ key (§3.6, no HSM hardware to build or verify it against).
 | --- | --- |
 | `src/aris/fl/` | AI-1 |
 | `src/aris/` scoring / explain (to be added as `scorer.py`, `explain.py`) | AI-2 |
-| `src/aris/bus.py`, `src/aris/kafka_bus.py`, `src/aris/schema_registry.py`, `src/aris/bankbot.py`, `src/aris/hashing.py`, `src/aris/attestation.py`, `src/aris/canary.py`, `src/aris/oprf.py`, `src/aris/api/`, `scripts/` | Backend |
+| `src/aris/bus.py`, `src/aris/kafka_bus.py`, `src/aris/schema_registry.py`, `src/aris/bankbot.py`, `src/aris/hashing.py`, `src/aris/attestation.py`, `src/aris/canary.py`, `src/aris/oprf.py`, `src/aris/hsm.py`, `src/aris/api/`, `scripts/` | Backend |
 | `src/aris/schema.py` | **All — change only with the group** |
 | `docs/PROJECT.md` | Shared report |
 | `README.md` Phase log | Whoever closed the phase (must update) |

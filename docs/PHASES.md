@@ -204,31 +204,32 @@ attribution through `RiskSignal`'s own token validator to an actual BankBot
 - Load test the bus -- **done.** `src/aris/loadtest.py`, measured against
   both `InMemoryRiskBus` and a live `KafkaRiskBus`: see
   [`docs/LOADTEST.md`](LOADTEST.md) for numbers, and known limits.
-- SECURITY.md hardening -- **done: §3.1, §3.2, §3.3, §3.4, §3.5, §3.8** (of
-  the 7-item priority list; only §3.6, HSM-resident key, remains open, for
-  lack of hardware to build or verify it against). §3.4 re-scoped
-  `KafkaRiskBus` from full-topic replication to prefix-bucketed consumption;
-  §3.1 built an RSA-FDH blind signature (not a literal RFC 9497 OPRF, and
-  not wired into `risk_id_for_account`'s call sites); §3.8 added an mTLS +
-  per-principal-ACL Kafka listener alongside the original plaintext one --
-  see the README M6+ phase log and each section of `docs/SECURITY.md` for
-  what actually closed and what each one cost.
+- SECURITY.md hardening -- **done: all 7 of the priority list's items**
+  (§3.1, §3.2, §3.3, §3.4, §3.5, §3.6, §3.8). §3.4 re-scoped `KafkaRiskBus`
+  from full-topic replication to prefix-bucketed consumption; §3.1 built an
+  RSA-FDH blind signature (not a literal RFC 9497 OPRF); §3.6 generates the
+  consortium key inside a PKCS#11 token, verified against SoftHSM2 (no HSM
+  hardware available -- a real, stated gap, not claimed as closed outright);
+  §3.8 added an mTLS + per-principal-ACL Kafka listener alongside the
+  original plaintext one. §3.1 and §3.6's actual outputs are **not** wired
+  into `risk_id_for_account`'s call sites -- see the README M6+ phase log
+  and each section of `docs/SECURITY.md` for what actually closed and what
+  each one cost.
 
-**Done when:** Documented limits and attack notes for a report/defense.
-Largely met -- robust aggregation, the load test, and six of seven
-SECURITY.md priority-list items all have real, measured, documented
-results, several verified against a live broker rather than just
-configured; graph/velocity features remain open, and so does §3.6
-(HSM-resident key).
+**Done when:** Documented limits and attack notes for a report/defense. Met
+for the bus/security side -- robust aggregation, the load test, and all
+seven SECURITY.md priority-list items have real, measured, documented
+results, several verified against a live broker or a real PKCS#11 token
+rather than just configured. Graph/velocity features remain open -- the
+only item left across both M6+ and SECURITY.md.
 
 ---
 
 ## Suggested next session
 
-**M0–M5 are done; M6+ is largely done** (robust aggregation, bus load
-testing, and six of seven SECURITY.md priority items shipped; only
-graph/velocity features and §3.6's HSM-resident key remain). Next: AI-2
-graph/velocity features (needs new synthetic transaction-history generation
-first) -- §3.6 is not realistically buildable further without actual HSM
-hardware. When a phase closes, append what shipped to the Phase log in
-`README.md`.
+**M0–M5 are done; M6+ is done except graph/velocity features** (robust
+aggregation, bus load testing, and all seven SECURITY.md priority items
+shipped). Next: AI-2 graph/velocity features -- needs new synthetic
+transaction-history generation first, since no current dataset links prior
+activity to a receiver account. When a phase closes, append what shipped to
+the Phase log in `README.md`.

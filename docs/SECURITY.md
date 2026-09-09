@@ -190,7 +190,7 @@ second as no newer than the first.
 **Not done:** publication jitter and `risk_score` bucketing — `risk_score` is still
 published at full 0–100 resolution.
 
-### 3.6 The key lives in an environment variable — *medium*
+### 3.6 The key lives in an environment variable — *medium* — done (software stand-in)
 
 `ARIS_SALT` is readable from `/proc/<pid>/environ`, `ps eww`, container inspection, and
 crash dumps. The project write-up describes HSM/KMS storage; **this code does not do
@@ -202,6 +202,30 @@ saturated, logged traffic.
 The key is at least required to be encoded random bytes rather than a passphrase: given
 one known `(account, risk_id)` pair, which every member has, a human-chosen passphrase
 falls to off-the-shelf tooling.
+
+**Done, against a real PKCS#11 implementation, with a stated hardware gap:**
+`aris/hsm.py` generates the consortium key *inside* a PKCS#11 token
+(`generate_consortium_key`) as `CKA_SENSITIVE` + `CKA_EXTRACTABLE=false`, so it can be
+*used* (`C_Sign`) but never read back out — not by an attacker, and not by this process
+either. Verified directly, not just configured (`tests/test_hsm.py`): reading the raw
+key value off a key generated this way raises `pkcs11.AttributeSensitive`, the
+PKCS#11-level enforcement of exactly this section's ask, while signing through it still
+works. Epoch subkeys (§3.2) are still derived by HMACing the epoch string under the
+root key, but that HMAC now runs as one `C_Sign` call inside the token — the *root* key
+never leaves it; the resulting 32-byte epoch subkey comes back to this process, exactly
+the bounded, one-day exposure §3.2 already accepts.
+
+No HSM hardware was available to build or verify this against, so it is developed and
+tested against SoftHSM2 — a real, widely-used PKCS#11 *software* token, not a mock of
+the PKCS#11 API. The `C_Sign` / `CKA_SENSITIVE` / `CKA_EXTRACTABLE` behavior this
+depends on is standard PKCS#11, identical in shape against a real HSM. What SoftHSM2
+cannot demonstrate is hardware-level key protection: a compromised host OS can still
+read SoftHSM2's on-disk token store directly, just not through the PKCS#11 API this
+module uses — that is the gap a real HSM closes that no software stand-in can, which is
+why this is marked done against the software-verifiable half of the requirement, not
+claimed as a hardware-equivalent guarantee. **Not wired into the rest of the bus**,
+same as §3.1's OPRF construction: `aris.hashing.load_salt`/`risk_id_for_account` is
+still what `BankBot` and `KafkaRiskBus` use.
 
 ### 3.7 The audit log is a plaintext reverse table — *medium*
 
@@ -283,18 +307,18 @@ plaintext listener entirely rather than run both side by side.
 | 3 | Prefix-bucket lookup | 3.4 | 0.5 d (actual: re-scoped, ~1 d) | ✅ done |
 | 4 | Quantise timestamp, round confidence | 3.5 | 1 h | ✅ done (jitter, score bucketing still open) |
 | 5 | OPRF-derived `risk_id` | 3.1 | 3–5 d | ✅ done (RSA-FDH, not RFC 9497; not wired in) |
-| 6 | HSM-resident key | 3.6 | 2–3 d | open |
+| 6 | HSM-resident key | 3.6 | 2–3 d | ✅ done (SoftHSM2; real HSM hardware not available) |
 | 7 | mTLS + per-bank Kafka ACLs | 3.8 | 1–2 d | ✅ done |
 
-Items 1–4 were independent of the OPRF and worth doing regardless — all four, plus item
-5 (§3.1's blind-signature construction) and item 7 (§3.8's mTLS/ACLs), are now done. If
-item 5's actual output were never wired into `risk_id_for_account`'s call sites (it
-isn't yet — see §3.1), HSM-resident HMAC plus daily epochs gets most of the same
-benefit with no new cryptography — the remaining gap is that each bank then
-rate-limits *itself*, whereas an OPRF-style authority puts that limit in a
-counterparty's hands. That difference is the difference between a control and a
-promise. Only item 6 (HSM-resident key) remains genuinely open, for lack of hardware
-to build and verify it against.
+Items 1–4 were independent of the OPRF and worth doing regardless — all seven items in
+this table are now built, though two (§3.1's OPRF-equivalent, §3.6's HSM-resident key)
+have real, stated gaps rather than closing their section outright: neither is wired
+into `risk_id_for_account`'s call sites (§3.1's own text: HSM-resident HMAC plus daily
+epochs already gets most of the OPRF's benefit with no new cryptography — the remaining
+gap is that each bank then rate-limits *itself*, whereas an OPRF-style authority puts
+that limit in a counterparty's hands, the difference between a control and a promise),
+and §3.6 is verified against SoftHSM2, a real PKCS#11 software token, not real HSM
+hardware this project has no access to.
 
 ## 5. Reporting
 

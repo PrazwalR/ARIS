@@ -47,6 +47,12 @@ xai = [
     "shap>=0.45",
     "evidently>=0.4",
 ]
+# M6+ SECURITY.md SS3.6 -- PKCS#11 HSM-backed consortium key. Needs a real
+# PKCS#11 module (SoftHSM2 for local dev, or a real HSM's) at runtime; this
+# only pulls in the Python bindings, not the module itself.
+hsm = [
+    "python-pkcs11>=0.7",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
