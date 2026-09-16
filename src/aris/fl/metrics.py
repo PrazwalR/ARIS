@@ -13,12 +13,13 @@ from sklearn.metrics import (
 
 
 def classification_metrics(y_true: npt.NDArray[Any], scores: npt.NDArray[Any]) -> dict[str, float]:
-    """AUC, PR-AUC, recall at 5% FPR, FPR at 50% recall, accuracy at 0.5.
+    """AUC, PR-AUC, recall at 5% FPR, FPR at 50% recall, and accuracy/precision/
+    recall at a fixed 0.5 threshold.
 
-    Accuracy is threshold-dependent and, on imbalanced fraud data, easy to
-    read as more meaningful than it is (predicting "not fraud" for every row
-    scores misleadingly high). It's reported alongside AUC/PR-AUC, never in
-    place of them.
+    The fixed-threshold numbers are easy to read as more meaningful than they
+    are on imbalanced fraud data (predicting "not fraud" for every row scores
+    misleadingly high accuracy). They're reported alongside AUC/PR-AUC, never
+    in place of them.
     """
     y_true = np.asarray(y_true).astype(int)
     scores = np.asarray(scores, dtype=float)
@@ -29,6 +30,8 @@ def classification_metrics(y_true: npt.NDArray[Any], scores: npt.NDArray[Any]) -
             "recall_at_fpr_0_05": float("nan"),
             "fpr_at_recall_0_50": float("nan"),
             "accuracy_at_0_5": float("nan"),
+            "precision_at_0_5": float("nan"),
+            "recall_at_0_5": float("nan"),
             "positives": int(y_true.sum()),
             "n": len(y_true),
         }
@@ -42,7 +45,13 @@ def classification_metrics(y_true: npt.NDArray[Any], scores: npt.NDArray[Any]) -
     _, _, _ = precision_recall_curve(y_true, scores)
     fpr_at_recall = _fpr_at_recall(y_true, scores, target_recall=0.5)
 
-    accuracy = float(((scores >= 0.5).astype(int) == y_true).mean())
+    predicted = (scores >= 0.5).astype(int)
+    accuracy = float((predicted == y_true).mean())
+    tp = int(np.sum((predicted == 1) & (y_true == 1)))
+    fp = int(np.sum((predicted == 1) & (y_true == 0)))
+    fn = int(np.sum((predicted == 0) & (y_true == 1)))
+    precision_0_5 = float(tp / (tp + fp)) if (tp + fp) > 0 else 0.0
+    recall_0_5 = float(tp / (tp + fn)) if (tp + fn) > 0 else 0.0
 
     return {
         "auc": auc,
@@ -50,6 +59,8 @@ def classification_metrics(y_true: npt.NDArray[Any], scores: npt.NDArray[Any]) -
         "recall_at_fpr_0_05": float(recall_at_fpr),
         "fpr_at_recall_0_50": float(fpr_at_recall),
         "accuracy_at_0_5": accuracy,
+        "precision_at_0_5": precision_0_5,
+        "recall_at_0_5": recall_0_5,
         "positives": int(y_true.sum()),
         "n": len(y_true),
     }

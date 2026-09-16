@@ -124,19 +124,25 @@ r = json.load(open('data/processed/m1_metrics_synthetic.json'))
 print('trained on:', r['n_train'], 'rows')
 print('held out, NEVER trained on:', r['n_holdout'], 'rows,', r['holdout_positives'], 'of them fraud')
 print()
-print(f'{\"model\":<10} {\"AUC\":>6} {\"accuracy@0.5\":>13}')
+print(f'{\"model\":<10} {\"AUC\":>6} {\"prec@0.5\":>9} {\"rec@0.5\":>9} {\"acc@0.5\":>9}')
 for b in r['banks']:
-    print(f'{b[\"bank_id\"]:<10} {b[\"local\"][\"auc\"]:>6.3f} {b[\"local\"][\"accuracy_at_0_5\"]:>13.3f}')
-print(f'{\"mean local\":<10} {r[\"mean_local\"][\"auc\"]:>6.3f} {r[\"mean_local\"][\"accuracy_at_0_5\"]:>13.3f}')
-print(f'{\"GLOBAL\":<10} {r[\"global\"][\"auc\"]:>6.3f} {r[\"global\"][\"accuracy_at_0_5\"]:>13.3f}')
+    l = b['local']
+    print(f'{b[\"bank_id\"]:<10} {l[\"auc\"]:>6.3f} {l[\"precision_at_0_5\"]:>9.3f} {l[\"recall_at_0_5\"]:>9.3f} {l[\"accuracy_at_0_5\"]:>9.3f}')
+m = r['mean_local']
+print(f'{\"mean local\":<10} {m[\"auc\"]:>6.3f} {m[\"precision_at_0_5\"]:>9.3f} {m[\"recall_at_0_5\"]:>9.3f} {m[\"accuracy_at_0_5\"]:>9.3f}')
+g = r['global']
+print(f'{\"GLOBAL\":<10} {g[\"auc\"]:>6.3f} {g[\"precision_at_0_5\"]:>9.3f} {g[\"recall_at_0_5\"]:>9.3f} {g[\"accuracy_at_0_5\"]:>9.3f}')
 "
 ```
 
-Accuracy is included because reviewers ask for it by name, but say out loud
-that AUC is the metric that actually matters here: with ~26% fraud in this
-holdout, a model that always predicts "not fraud" would already score ~74%
-accuracy without catching a single case — AUC and PR-AUC are what expose
-that a model isn't just doing that.
+Accuracy/precision/recall are included because reviewers ask for them by
+name, but say out loud that AUC/PR-AUC are the metrics that actually
+matter here: with ~26% fraud in this holdout, a model that always predicts
+"not fraud" would already score ~74% accuracy without catching a single
+case, and precision/recall are both tied to one arbitrary 0.5 threshold
+rather than the full ROC/PR sweep. Full tables, curves, and confusion
+matrices (including the ULB dataset, where this distinction matters even
+more) are in `docs/METRICS.md`.
 
 Say out loud where the split happens: `src/aris/fl/run.py` carves the
 holdout out *before* any bank's training client ever sees the data
