@@ -96,9 +96,83 @@ the same way `tests/test_api_kafka.py` does.)
 
 ---
 
-## 3. Security hardening, live — not just green checkmarks
+## 3. The model, evaluated on data it never trained on
 
-### 3a. mTLS + per-bank ACLs (docs/SECURITY.md §3.8)
+**Shows:** the AUC numbers in the review doc are measured on a genuine
+held-out split, not the training data — and then the same trained model
+scoring individual rows that never existed in the dataset at all.
+
+### 3a. Train fresh, print the holdout split sizes, evaluate only on the holdout
+
+```bash
+ARIS_SALT=$(python -c "import secrets;print(secrets.token_hex(32))") \
+  python -m aris.fl.run --dataset synthetic
+```
+
+Prints a JSON summary ending in `global_auc`/`global_beats_mean_local_auc`.
+The unseen-data proof is in the saved report — pull it up right after:
+
+```bash
+python3 -c "
+import json
+r = json.load(open('data/processed/m1_metrics_synthetic.json'))
+print('trained on:', r['n_train'], 'rows')
+print('held out, NEVER trained on:', r['n_holdout'], 'rows,', r['holdout_positives'], 'of them fraud')
+print('global model AUC on that unseen set:', r['global']['auc'])
+print('mean local-only AUC on that same unseen set:', r['mean_local']['auc'])
+"
+```
+
+Say out loud where the split happens: `src/aris/fl/run.py` carves the
+holdout out *before* any bank's training client ever sees the data
+(`pooled_holdout_from_shards` for synthetic, a time-based split for ULB so
+training is on the past and evaluation is on the future — no lookahead).
+The 5 `BankFlowerClient`s are only ever constructed with the training
+portion; the holdout array is never passed to them.
+
+### 3b. The same trained model scoring rows that never existed in the dataset
+
+**Shows:** not just an aggregate AUC number — individual predictions on
+hand-built inputs, live, including one that proves the model learned
+something *specific*, not "big number triggers fraud."
+
+```bash
+python scripts/review_demo_unseen_scoring.py
+```
+
+Expect two clean/typical rows to read `allow`, two fraud-pattern rows
+(mimicking what bank 0's and bank 3's fraud looked like in training) to
+read `BLOCK`, and — the point worth pausing on — a row with the *same
+spike magnitude* on feature `f6` to read `allow` too. Only 5 banks were
+trained (driving features 0–4); `f6` never drove fraud for any of them, so
+the model correctly learned it's irrelevant instead of just reacting to any
+large number. That's the difference between pattern-matching and
+memorizing a threshold.
+
+### 3c. Test it on data of your own instead of the synthetic set
+
+If your guide wants to see it trained on something less synthetic, and you
+have a CSV with a numeric fraud-label column (`isFraud` or `Class`):
+
+```bash
+cp /path/to/your_data.csv data/raw/paysim.csv
+ARIS_SALT=$(python -c "import secrets;print(secrets.token_hex(32))") \
+  python -m aris.fl.run --dataset paysim --max-rows 20000
+```
+
+This reuses the exact same pipeline unchanged — non-IID partitioning across
+5 banks, FedAvg, holdout evaluation — and saves a fresh checkpoint to
+`data/processed/m1_global_paysim.npz`. Swap that path into
+`review_demo_unseen_scoring.py`'s `load_weights(...)` call to score rows
+against it instead of the synthetic checkpoint. If your columns don't match
+that shape, `load_paysim` in `src/aris/fl/datasets.py` (~15 lines) is the
+template to copy and adjust.
+
+---
+
+## 4. Security hardening, live — not just green checkmarks
+
+### 4a. mTLS + per-bank ACLs (docs/SECURITY.md §3.8)
 
 **Shows:** a bank with a *valid* certificate, signed by the same CA as
 everyone else, still gets rejected the moment it tries to publish without a
@@ -118,7 +192,7 @@ before it prints); BANK-EVIL can *still read* (Read is granted broadly, only
 Write is per-bank); a client with zero certificate times out trying to
 connect at all.
 
-### 3b. HSM-resident key, non-extractable (docs/SECURITY.md §3.6)
+### 4b. HSM-resident key, non-extractable (docs/SECURITY.md §3.6)
 
 **Shows:** the consortium key can be *used* to sign, but this process cannot
 *read it back out* — enforced by the PKCS#11 token itself, not by a
@@ -138,7 +212,7 @@ its on-disk store directly.
 
 ---
 
-## 4. The measured numbers, reproduced live
+## 5. The measured numbers, reproduced live
 
 **Shows:** the throughput/latency figures in the review doc aren't fixed —
 they're measured fresh every time, with real variance, against a real lock
@@ -163,7 +237,7 @@ number here read as a regression.
 
 ---
 
-## 5. If someone asks "how do I know these commits are really yours"
+## 6. If someone asks "how do I know these commits are really yours"
 
 ```bash
 git log --oneline
