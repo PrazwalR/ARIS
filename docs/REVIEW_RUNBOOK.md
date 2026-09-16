@@ -102,6 +102,11 @@ the same way `tests/test_api_kafka.py` does.)
 held-out split, not the training data — and then the same trained model
 scoring individual rows that never existed in the dataset at all.
 
+Full per-bank tables, ROC curves, and Precision/Recall curves for both
+datasets already live in **`docs/METRICS.md`** — open that instead of
+re-running everything below if you just want to show the pictures. The
+steps below are for reproducing those numbers live, from scratch.
+
 ### 3a. Train fresh, print the holdout split sizes, evaluate only on the holdout
 
 ```bash

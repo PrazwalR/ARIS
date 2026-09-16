@@ -53,6 +53,11 @@ xai = [
 hsm = [
     "python-pkcs11>=0.7",
 ]
+# Report generation only (scripts/generate_metrics_report.py) -- never
+# imported by src/aris itself.
+viz = [
+    "matplotlib>=3.8",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

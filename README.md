@@ -60,6 +60,9 @@ Run: `python -m aris.demo.anu_transfer` · tests: `pytest` (see Quick start — 
 
 #### Verified results (this machine)
 
+Full breakdown — every bank individually, the global model, both datasets,
+plus ROC and Precision/Recall curves: **[docs/METRICS.md](docs/METRICS.md)**.
+
 **Synthetic (5 banks, 8 rounds × 4 local epochs)** — each bank’s fraud depends on a different feature; holdout mixes all banks.
 
 | Model | AUC | PR-AUC | Accuracy @ 0.5 | Recall @ 5% FPR | FPR @ 50% recall |
