@@ -75,6 +75,25 @@ Narrate the three sections it prints: the signal on the bus (no plain
 account number, ever), BankBot's decision, and the internal audit record
 (only reachable by an analyst, never handed to the customer-facing channel).
 
+### 2a. The same story, over real HTTP, backed by the real Kafka bus
+
+**Shows:** M3 (Kafka) and M4 (the HTTP API) actually wired together — Bank
+B's own process publishes to the live broker, Bank A's own separate process
+(sharing nothing but the broker) answers a real `POST /transfers` with
+`block`. This is the stronger version of step 2 if you want to show the
+production shape, not just the CLI story.
+
+```bash
+ARIS_SALT=$(python -c "import secrets;print(secrets.token_hex(32))") \
+  python scripts/review_demo_http_block.py
+```
+
+Expect `HTTP 200` and `{'decision': 'block', ...}`. Needs `docker compose up
+-d` from step 0. (Note: `python -m aris.api` on its own can't show this —
+its keyring starts empty and trusts no bank, so it always reads unflagged.
+This script wires `create_app()` with a keyring that trusts BANK-B instead,
+the same way `tests/test_api_kafka.py` does.)
+
 ---
 
 ## 3. Security hardening, live — not just green checkmarks
