@@ -62,12 +62,22 @@ Run: `python -m aris.demo.anu_transfer` · tests: `pytest` (see Quick start — 
 
 **Synthetic (5 banks, 8 rounds × 4 local epochs)** — each bank’s fraud depends on a different feature; holdout mixes all banks.
 
-| Model | AUC | PR-AUC | Recall @ 5% FPR | FPR @ 50% recall |
-| --- | --- | --- | --- | --- |
-| Mean of 5 **local** models | 0.572 | 0.316 | 0.088 | 0.390 |
-| **Global FedAvg** | **0.655** | **0.392** | **0.155** | **0.277** |
+| Model | AUC | PR-AUC | Accuracy @ 0.5 | Recall @ 5% FPR | FPR @ 50% recall |
+| --- | --- | --- | --- | --- | --- |
+| BANK-A (local only) | 0.560 | 0.302 | 0.626 | 0.065 | 0.391 |
+| BANK-B (local only) | 0.597 | 0.354 | 0.638 | 0.126 | 0.378 |
+| BANK-C (local only) | 0.560 | 0.300 | 0.624 | 0.078 | 0.422 |
+| BANK-D (local only) | 0.555 | 0.298 | 0.591 | 0.074 | 0.416 |
+| BANK-E (local only) | 0.589 | 0.329 | 0.629 | 0.097 | 0.342 |
+| Mean of 5 **local** models | 0.572 | 0.316 | 0.622 | 0.088 | 0.390 |
+| **Global FedAvg** | **0.655** | **0.392** | **0.661** | **0.155** | **0.277** |
 
-`global_beats_mean_local_auc = true` (exit code 0).
+Accuracy is threshold-dependent (score ≥ 0.5) and reported alongside AUC,
+never instead of it — on this holdout (309/1200 positives, ~26%) a
+constant "not fraud" prediction would already score ~74% accuracy, so AUC
+and PR-AUC are the metrics that actually distinguish these models.
+`global_beats_mean_local_auc = true` (exit code 0). All numbers above are
+regenerated live by `python -m aris.fl.run --dataset synthetic`, not fixed.
 
 **ULB credit-card fraud** (auto-downloaded, capped at 30k rows keeping all fraud, 5 banks, temporal shards, 5 rounds × 2 epochs):
 

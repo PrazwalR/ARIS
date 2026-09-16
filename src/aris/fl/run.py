@@ -125,6 +125,7 @@ def run_experiment(
             "pr_auc": mean_metric(local_metrics, "pr_auc"),
             "recall_at_fpr_0_05": mean_metric(local_metrics, "recall_at_fpr_0_05"),
             "fpr_at_recall_0_50": mean_metric(local_metrics, "fpr_at_recall_0_50"),
+            "accuracy_at_0_5": mean_metric(local_metrics, "accuracy_at_0_5"),
         },
         "global": global_metrics,
         "global_beats_mean_local_auc": bool(global_metrics["auc"] > mean_local_auc),

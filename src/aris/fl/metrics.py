@@ -13,7 +13,13 @@ from sklearn.metrics import (
 
 
 def classification_metrics(y_true: npt.NDArray[Any], scores: npt.NDArray[Any]) -> dict[str, float]:
-    """AUC, PR-AUC, recall at 5% FPR, FPR at 50% recall."""
+    """AUC, PR-AUC, recall at 5% FPR, FPR at 50% recall, accuracy at 0.5.
+
+    Accuracy is threshold-dependent and, on imbalanced fraud data, easy to
+    read as more meaningful than it is (predicting "not fraud" for every row
+    scores misleadingly high). It's reported alongside AUC/PR-AUC, never in
+    place of them.
+    """
     y_true = np.asarray(y_true).astype(int)
     scores = np.asarray(scores, dtype=float)
     if len(np.unique(y_true)) < 2:
@@ -22,6 +28,7 @@ def classification_metrics(y_true: npt.NDArray[Any], scores: npt.NDArray[Any]) -
             "pr_auc": float("nan"),
             "recall_at_fpr_0_05": float("nan"),
             "fpr_at_recall_0_50": float("nan"),
+            "accuracy_at_0_5": float("nan"),
             "positives": int(y_true.sum()),
             "n": len(y_true),
         }
@@ -35,11 +42,14 @@ def classification_metrics(y_true: npt.NDArray[Any], scores: npt.NDArray[Any]) -
     _, _, _ = precision_recall_curve(y_true, scores)
     fpr_at_recall = _fpr_at_recall(y_true, scores, target_recall=0.5)
 
+    accuracy = float(((scores >= 0.5).astype(int) == y_true).mean())
+
     return {
         "auc": auc,
         "pr_auc": pr_auc,
         "recall_at_fpr_0_05": float(recall_at_fpr),
         "fpr_at_recall_0_50": float(fpr_at_recall),
+        "accuracy_at_0_5": accuracy,
         "positives": int(y_true.sum()),
         "n": len(y_true),
     }

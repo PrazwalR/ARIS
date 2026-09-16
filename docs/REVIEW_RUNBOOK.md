@@ -118,10 +118,20 @@ import json
 r = json.load(open('data/processed/m1_metrics_synthetic.json'))
 print('trained on:', r['n_train'], 'rows')
 print('held out, NEVER trained on:', r['n_holdout'], 'rows,', r['holdout_positives'], 'of them fraud')
-print('global model AUC on that unseen set:', r['global']['auc'])
-print('mean local-only AUC on that same unseen set:', r['mean_local']['auc'])
+print()
+print(f'{\"model\":<10} {\"AUC\":>6} {\"accuracy@0.5\":>13}')
+for b in r['banks']:
+    print(f'{b[\"bank_id\"]:<10} {b[\"local\"][\"auc\"]:>6.3f} {b[\"local\"][\"accuracy_at_0_5\"]:>13.3f}')
+print(f'{\"mean local\":<10} {r[\"mean_local\"][\"auc\"]:>6.3f} {r[\"mean_local\"][\"accuracy_at_0_5\"]:>13.3f}')
+print(f'{\"GLOBAL\":<10} {r[\"global\"][\"auc\"]:>6.3f} {r[\"global\"][\"accuracy_at_0_5\"]:>13.3f}')
 "
 ```
+
+Accuracy is included because reviewers ask for it by name, but say out loud
+that AUC is the metric that actually matters here: with ~26% fraud in this
+holdout, a model that always predicts "not fraud" would already score ~74%
+accuracy without catching a single case — AUC and PR-AUC are what expose
+that a model isn't just doing that.
 
 Say out loud where the split happens: `src/aris/fl/run.py` carves the
 holdout out *before* any bank's training client ever sees the data
