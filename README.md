@@ -79,14 +79,26 @@ and PR-AUC are the metrics that actually distinguish these models.
 `global_beats_mean_local_auc = true` (exit code 0). All numbers above are
 regenerated live by `python -m aris.fl.run --dataset synthetic`, not fixed.
 
-**ULB credit-card fraud** (auto-downloaded, capped at 30k rows keeping all fraud, 5 banks, temporal shards, 5 rounds × 2 epochs):
+**ULB credit-card fraud** (auto-downloaded, capped at 30k rows keeping all fraud, 5 banks, temporal shards, 5 rounds × 2 epochs). Holdout: 6000 rows, 34 fraud (~0.6%) — far more imbalanced than synthetic, which is why accuracy alone would be an especially bad headline metric here (predicting "not fraud" for every row scores >99%):
 
-| Model | AUC | PR-AUC |
-| --- | --- | --- |
-| Mean of 5 **local** models | 0.969 | — |
-| **Global FedAvg** | **0.985** | **0.877** |
+| Model | AUC | PR-AUC | Accuracy @ 0.5 |
+| --- | --- | --- | --- |
+| BANK-A (local only) | 0.997 | 0.879 | 0.981 |
+| BANK-B (local only) | 0.960 | 0.866 | 0.990 |
+| BANK-C (local only) | 0.984 | 0.904 | 0.988 |
+| BANK-D (local only) | 0.967 | 0.846 | 0.978 |
+| BANK-E (local only) | 0.984 | 0.882 | 0.973 |
+| Mean of 5 **local** models | 0.978 | 0.875 | 0.982 |
+| **Global FedAvg** | **0.990** | **0.926** | **0.983** |
 
-`global_beats_mean_local_auc = true`.
+`global_beats_mean_local_auc = true`. Re-measured for this table (previous
+version showed 0.969 / 0.985 / 0.877 with the local-mean PR-AUC blank —
+that blank was a documentation gap, not a missing capability: `run.py` has
+always computed `mean_local.pr_auc`, it just wasn't copied into this table
+when it was originally written by hand. The small drift from the old
+headline numbers is normal run-to-run variance, not a regression.
+Reproduce with `python -m aris.fl.run --dataset ulb --max-rows 30000
+--rounds 5 --epochs 2` (first run downloads ~47 MB to `data/raw/`).
 
 Tests: `pytest` → **188 passed** (M0 + M1 + M2), including `test_synthetic_global_beats_mean_local_auc`. M0 Anu demo still blocks ACC-999.
 
