@@ -227,11 +227,54 @@ claimed as a hardware-equivalent guarantee. **Not wired into the rest of the bus
 same as §3.1's OPRF construction: `aris.hashing.load_salt`/`risk_id_for_account` is
 still what `BankBot` and `KafkaRiskBus` use.
 
-### 3.7 The audit log is a plaintext reverse table — *medium*
+### 3.7 The audit log is a plaintext reverse table — *medium* — done
 
 `AuditRecord` stores `receiver_account` next to `risk_id`. Correct for investigations,
 but it accumulates a ready-made mapping for every account a bank's customers pay. Needs
 encryption at rest, a named investigations role, and a retention limit.
+
+**Done, all three.** `aris.audit_security` (new module) adds:
+
+- **Encryption at rest.** `InMemoryAuditLog` now stores each record as AES-256-GCM
+  ciphertext (`encrypt_record`/`decrypt_record`), not a plain `AuditRecord` in a dict.
+  The `audit_ref` is bound in as AEAD associated data, so one record's ciphertext
+  cannot be swapped onto another's reference and silently decrypt as the wrong
+  customer's data — confirmed directly (`test_decrypting_under_the_wrong_audit_ref_fails`).
+  The key is generated per-instance by default (adequate for this in-process demo sink,
+  since nothing survives past the process); a durable deployment loads one from
+  `AuditEncryptionKey.from_env()` instead, which fails closed on a missing or malformed
+  key the same way `ARIS_SALT` does in `aris.hashing` — no silent fallback to an
+  unrecoverable generated key.
+- **A named investigations role.** `AuditSink.get()` now requires an
+  `InvestigatorCredential` (`investigator_id` + a mandatory `reason`), not a single
+  shared on/off secret. The HTTP API (`GET /audit/{audit_ref}`) replaces the old
+  `X-Admin-Key` header with `X-Investigator-Id` / `X-Investigator-Key` /
+  `X-Investigator-Reason`, checked against `ApiSettings.investigators` (a per-name
+  secret, `ARIS_API_INVESTIGATORS="alice:key1,bob:key2"`) — a compromised or
+  offboarded investigator's credential can be revoked individually, unlike one key
+  shared by everyone with analyst access.
+- **A retention limit.** `InMemoryAuditLog(retention=timedelta(days=...))` purges any
+  record older than that window — on every `record()` and `get()` call, not just on a
+  separate cleanup pass that could silently stop running. This is a second, independent
+  bound from the existing `capacity` eviction: `capacity` protects memory, `retention`
+  is a stated data-minimization policy, verified as two different code paths
+  (`test_a_record_past_retention_is_unreachable` vs. the pre-existing eviction tests).
+
+**Every read is logged, not just successful ones.** `AuditAccessLog` records every
+`get()` call against the real sink — `investigator_id`, `reason`, `audit_ref`, whether a
+record was found, and when — including lookups of a reference that doesn't exist, since
+an attempted access is itself worth keeping. `InMemoryAuditLog.entries` (bulk
+introspection by code already running inside this trusted process — tests, the demo
+script) deliberately does not require a credential or write to this log: `get()`, not
+`entries`, is the analyst/investigator boundary `AuditSink.get()`'s own docstring
+already named before this work started.
+
+**Scope boundary, stated plainly:** this protects the data *at rest* in a sink's own
+storage and *in transit* to whoever asks for one record at a time. It does not protect
+against code running inside the same trusted process reading `entries` directly — the
+same boundary `python -m aris.hsm`/SS3.6 draws around "this process can use the key but
+not extract it": SS3.7 is about a leaked DB dump or an unauthenticated reader, not about
+BankBot's own process being hostile to itself.
 
 ### 3.8 The Kafka bus (M3) has no transport authentication — *high* — done
 
@@ -309,8 +352,9 @@ plaintext listener entirely rather than run both side by side.
 | 5 | OPRF-derived `risk_id` | 3.1 | 3–5 d | ✅ done (RSA-FDH, not RFC 9497; not wired in) |
 | 6 | HSM-resident key | 3.6 | 2–3 d | ✅ done (SoftHSM2; real HSM hardware not available) |
 | 7 | mTLS + per-bank Kafka ACLs | 3.8 | 1–2 d | ✅ done |
+| 8 | Encrypted, access-controlled audit log | 3.7 | 1 d | ✅ done |
 
-Items 1–4 were independent of the OPRF and worth doing regardless — all seven items in
+Items 1–4 were independent of the OPRF and worth doing regardless — all eight items in
 this table are now built, though two (§3.1's OPRF-equivalent, §3.6's HSM-resident key)
 have real, stated gaps rather than closing their section outright: neither is wired
 into `risk_id_for_account`'s call sites (§3.1's own text: HSM-resident HMAC plus daily

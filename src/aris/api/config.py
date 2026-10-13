@@ -12,7 +12,9 @@ from typing import Final
 from aris.schema import PolicyConfig
 
 BUS_BACKEND_ENV_VAR: Final = "ARIS_API_BUS_BACKEND"  # "memory" | "kafka"
-ADMIN_KEY_ENV_VAR: Final = "ARIS_API_ADMIN_KEY"
+# "id1:key1,id2:key2" -- a named investigator per shared secret, not one
+# shared admin key. See docs/SECURITY.md SS3.7.
+INVESTIGATORS_ENV_VAR: Final = "ARIS_API_INVESTIGATORS"
 STEP_UP_AT_ENV_VAR: Final = "ARIS_API_STEP_UP_AT"
 BLOCK_AT_ENV_VAR: Final = "ARIS_API_BLOCK_AT"
 STEP_UP_ABOVE_AMOUNT_ENV_VAR: Final = "ARIS_API_STEP_UP_ABOVE_AMOUNT_MINOR"
@@ -23,11 +25,28 @@ MIN_BANKS_TO_BLOCK_ENV_VAR: Final = "ARIS_API_MIN_BANKS_TO_BLOCK"
 @dataclass(frozen=True)
 class ApiSettings:
     bus_backend: str = "memory"
-    # None means the analyst audit-lookup endpoint is unreachable rather than
-    # falling back to some default -- an unconfigured key must fail closed,
-    # the same way a missing ARIS_SALT does in aris.hashing.
-    admin_key: str | None = None
+    # Empty means the analyst audit-lookup endpoint is unreachable rather than
+    # falling back to some default -- no configured investigators must fail
+    # closed, the same way a missing ARIS_SALT does in aris.hashing.
+    # investigator_id -> shared secret. A shared secret per name, not one
+    # admin key for everyone -- see docs/SECURITY.md SS3.7.
+    investigators: dict[str, str] = field(default_factory=dict)
     policy: PolicyConfig = field(default_factory=PolicyConfig)
+
+
+def _parse_investigators(raw: str) -> dict[str, str]:
+    investigators: dict[str, str] = {}
+    for pair in raw.split(","):
+        pair = pair.strip()
+        if not pair:
+            continue
+        if ":" not in pair:
+            raise RuntimeError(f"{INVESTIGATORS_ENV_VAR} entry {pair!r} must be 'id:key'")
+        investigator_id, key = (part.strip() for part in pair.split(":", 1))
+        if not investigator_id or not key:
+            raise RuntimeError(f"{INVESTIGATORS_ENV_VAR} entry {pair!r} has an empty id or key")
+        investigators[investigator_id] = key
+    return investigators
 
 
 def load_settings() -> ApiSettings:
@@ -43,8 +62,11 @@ def load_settings() -> ApiSettings:
     if (v := os.environ.get(MIN_BANKS_TO_BLOCK_ENV_VAR)) is not None:
         policy_kwargs["min_banks_to_block"] = int(v)
 
+    raw_investigators = os.environ.get(INVESTIGATORS_ENV_VAR)
+    investigators = _parse_investigators(raw_investigators) if raw_investigators else {}
+
     return ApiSettings(
         bus_backend=os.environ.get(BUS_BACKEND_ENV_VAR, "memory"),
-        admin_key=os.environ.get(ADMIN_KEY_ENV_VAR),
+        investigators=investigators,
         policy=PolicyConfig(**policy_kwargs),  # type: ignore[arg-type]
     )

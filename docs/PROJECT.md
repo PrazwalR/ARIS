@@ -13,7 +13,7 @@ layer of §3.1 including DP-SGD and secure aggregation (M1, M2), the
 Kafka-backed bus of §3.2 (M3), BankBot's HTTP surface (§3.3, M4),
 explainability/drift/model-registry (M5, `src/aris/fl/explain.py`,
 `drift.py`, `registry.py`), and M6+ (Byzantine-robust aggregation, a
-measured bus load test, and all 7 items in `docs/SECURITY.md`'s hardening
+measured bus load test, and all 8 items in `docs/SECURITY.md`'s hardening
 priority list — two, §3.1's OPRF-equivalent and §3.6's HSM-resident key,
 closed with real, stated gaps rather than claimed outright; see
 `docs/SECURITY.md` §4 for exactly which). Not yet built: graph/receiver-velocity

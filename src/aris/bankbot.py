@@ -7,18 +7,28 @@ every decision -- including the ones that allow the transfer.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import threading
 import uuid
 from abc import ABC, abstractmethod
 from collections import OrderedDict, deque
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Final
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from aris.audit_security import (
+    AuditAccessEvent,
+    AuditAccessLog,
+    AuditEncryptionKey,
+    EncryptedBlob,
+    InvestigatorCredential,
+    decrypt_record,
+    encrypt_record,
+)
 from aris.bus import LookupResult, RiskBus
 from aris.hashing import current_epoch, normalize_ifsc, risk_id_for_account
 from aris.schema import Decision, LookupStatus, PolicyConfig, apply_policy
@@ -140,12 +150,15 @@ class AuditSink(ABC):
     def record(self, entry: AuditRecord) -> None: ...
 
     @abstractmethod
-    def get(self, audit_ref: str) -> AuditRecord | None:
+    def get(self, audit_ref: str, investigator: InvestigatorCredential) -> AuditRecord | None:
         """Retrieve one record by the opaque reference BankBot handed the caller.
 
         The evidence behind a decision is only reachable through this method, not
         through anything the customer-facing response carries (see
         ``BankBotDecision``) -- an analyst path calls this, not the transfer path.
+        ``investigator`` names who is asking and why (see docs/SECURITY.md SS3.7);
+        implementations must log every call here, whether or not a record is
+        found, not just successful ones.
         """
 
 
@@ -154,36 +167,92 @@ class InMemoryAuditLog(AuditSink):
 
     A real deployment writes to append-only durable storage; this is capped so a
     long-running process cannot be driven out of memory by traffic alone.
+
+    Encrypts each record at rest (AES-256-GCM) and requires a named
+    ``InvestigatorCredential`` -- logged to ``access_log`` -- for every single-
+    record read via ``get()``. ``entries`` (bulk introspection by code already
+    running inside this trusted process -- tests, the demo script) decrypts
+    without that check, matching ``get()``'s own docstring: it, not ``entries``,
+    is the analyst/investigator boundary. See docs/SECURITY.md SS3.7.
     """
 
-    def __init__(self, capacity: int = DEFAULT_AUDIT_CAPACITY) -> None:
+    def __init__(
+        self,
+        capacity: int = DEFAULT_AUDIT_CAPACITY,
+        *,
+        encryption_key: AuditEncryptionKey | None = None,
+        retention: timedelta | None = None,
+        now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+        access_log_capacity: int = DEFAULT_AUDIT_CAPACITY,
+    ) -> None:
         if capacity < 1:
             raise ValueError("capacity must be positive")
-        self._entries: deque[AuditRecord] = deque(maxlen=capacity)
-        # transfer_id -> record, kept in sync with _entries so get() is O(1)
-        # instead of a linear scan over every record this sink has ever held.
-        self._by_ref: dict[str, AuditRecord] = {}
+        # Generated per-instance when not given: adequate for this in-process
+        # demo sink, since nothing here is read back after the process exits.
+        # A durable deployment passes one from AuditEncryptionKey.from_env()
+        # instead, so the key outlives any single process.
+        self._key = encryption_key or AuditEncryptionKey.generate()
+        self._retention = retention
+        self._now = now
+        self._order: deque[str] = deque(maxlen=capacity)
+        self._blobs: dict[str, EncryptedBlob] = {}
+        # audit_ref -> decided_at, kept outside the encrypted blob so a
+        # retention sweep never has to decrypt a record just to check its age.
+        self._decided_at: dict[str, datetime] = {}
+        self._access_log = AuditAccessLog(capacity=access_log_capacity)
         self._dropped = 0
 
+    def _purge_expired(self) -> None:
+        if self._retention is None:
+            return
+        cutoff = self._now() - self._retention
+        expired = [ref for ref, decided_at in self._decided_at.items() if decided_at < cutoff]
+        for ref in expired:
+            self._blobs.pop(ref, None)
+            self._decided_at.pop(ref, None)
+            with contextlib.suppress(ValueError):
+                self._order.remove(ref)
+
     def record(self, entry: AuditRecord) -> None:
+        self._purge_expired()
         # Losing the record of a blocked fraud attempt to a flood of cheap
         # allowed probes is evidence destruction, so a drop is always counted and
         # always surfaced. A durable sink must not drop at all.
-        evicted: AuditRecord | None = None
-        if len(self._entries) == self._entries.maxlen:
+        evicted_ref: str | None = None
+        if len(self._order) == self._order.maxlen:
             self._dropped += 1
-            evicted = self._entries[0]  # deque.append() below silently pops this
+            evicted_ref = self._order[0]  # deque.append() below silently pops this
             logger.warning(
                 "audit log at capacity; discarded oldest record (%d dropped total)",
                 self._dropped,
             )
-        self._entries.append(entry)
-        if evicted is not None:
-            del self._by_ref[evicted.transfer_id]
-        self._by_ref[entry.transfer_id] = entry
+        self._order.append(entry.transfer_id)
+        if evicted_ref is not None:
+            self._blobs.pop(evicted_ref, None)
+            self._decided_at.pop(evicted_ref, None)
+        self._blobs[entry.transfer_id] = encrypt_record(
+            self._key, entry.transfer_id, entry.model_dump_json().encode()
+        )
+        self._decided_at[entry.transfer_id] = entry.decided_at
 
-    def get(self, audit_ref: str) -> AuditRecord | None:
-        return self._by_ref.get(audit_ref)
+    def get(self, audit_ref: str, investigator: InvestigatorCredential) -> AuditRecord | None:
+        self._purge_expired()
+        blob = self._blobs.get(audit_ref)
+        record = (
+            AuditRecord.model_validate_json(decrypt_record(self._key, audit_ref, blob))
+            if blob is not None
+            else None
+        )
+        self._access_log.record(
+            AuditAccessEvent(
+                investigator_id=investigator.investigator_id,
+                reason=investigator.reason,
+                audit_ref=audit_ref,
+                found=record is not None,
+                accessed_at=self._now(),
+            )
+        )
+        return record
 
     @property
     def dropped(self) -> int:
@@ -192,10 +261,21 @@ class InMemoryAuditLog(AuditSink):
 
     @property
     def entries(self) -> tuple[AuditRecord, ...]:
-        return tuple(self._entries)
+        self._purge_expired()
+        return tuple(
+            AuditRecord.model_validate_json(decrypt_record(self._key, ref, self._blobs[ref]))
+            for ref in self._order
+        )
+
+    @property
+    def access_log(self) -> tuple[AuditAccessEvent, ...]:
+        """Every ``get()`` call this sink has served, found or not -- see
+        docs/SECURITY.md SS3.7."""
+        return self._access_log.entries
 
     def __len__(self) -> int:
-        return len(self._entries)
+        self._purge_expired()
+        return len(self._order)
 
 
 class BankBotDecision(BaseModel):
@@ -359,7 +439,7 @@ class BankBot:
             contributing_banks=contributing,
             model_version=signal.model_version if signal else None,
             policy=self.policy,
-            decided_at=datetime.now(timezone.utc),
+            decided_at=self._now(),
         )
         self.audit.record(entry)
 

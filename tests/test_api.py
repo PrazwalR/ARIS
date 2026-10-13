@@ -136,33 +136,69 @@ class TestHealthEndpoint:
         assert TestClient(app).get("/health").status_code == 200
 
 
+INVESTIGATOR_HEADERS = {
+    "X-Investigator-Id": "alice",
+    "X-Investigator-Key": "secret",
+    "X-Investigator-Reason": "fraud case #42",
+}
+
+
 class TestAuditEndpoint:
-    def test_no_admin_key_configured_disables_lookup(self, keyring):
+    def test_no_investigators_configured_disables_lookup(self, keyring):
         bus = InMemoryRiskBus(keyring)
-        app = create_app(bus, settings=ApiSettings(admin_key=None), audit=InMemoryAuditLog())
+        app = create_app(bus, settings=ApiSettings(investigators={}), audit=InMemoryAuditLog())
         client = TestClient(app)
-        resp = client.get("/audit/whatever", headers={"X-Admin-Key": "anything"})
+        resp = client.get("/audit/whatever", headers=INVESTIGATOR_HEADERS)
         assert resp.status_code == 503
 
-    def test_missing_key_is_rejected(self, keyring):
+    def test_missing_credentials_are_rejected(self, keyring):
         bus = InMemoryRiskBus(keyring)
-        app = create_app(bus, settings=ApiSettings(admin_key="secret"), audit=InMemoryAuditLog())
+        app = create_app(
+            bus, settings=ApiSettings(investigators={"alice": "secret"}), audit=InMemoryAuditLog()
+        )
         resp = TestClient(app).get("/audit/whatever")
         assert resp.status_code == 401
 
-    def test_wrong_key_is_rejected(self, keyring):
+    def test_unknown_investigator_is_rejected(self, keyring):
         bus = InMemoryRiskBus(keyring)
-        app = create_app(bus, settings=ApiSettings(admin_key="secret"), audit=InMemoryAuditLog())
-        resp = TestClient(app).get("/audit/whatever", headers={"X-Admin-Key": "wrong"})
+        app = create_app(
+            bus, settings=ApiSettings(investigators={"alice": "secret"}), audit=InMemoryAuditLog()
+        )
+        resp = TestClient(app).get(
+            "/audit/whatever",
+            headers={**INVESTIGATOR_HEADERS, "X-Investigator-Id": "mallory"},
+        )
         assert resp.status_code == 401
 
-    def test_correct_key_retrieves_the_full_record_including_score(self, keyring, bank_b):
+    def test_wrong_key_for_a_known_investigator_is_rejected(self, keyring):
+        bus = InMemoryRiskBus(keyring)
+        app = create_app(
+            bus, settings=ApiSettings(investigators={"alice": "secret"}), audit=InMemoryAuditLog()
+        )
+        resp = TestClient(app).get(
+            "/audit/whatever",
+            headers={**INVESTIGATOR_HEADERS, "X-Investigator-Key": "wrong"},
+        )
+        assert resp.status_code == 401
+
+    def test_a_blank_reason_is_rejected(self, keyring):
+        bus = InMemoryRiskBus(keyring)
+        app = create_app(
+            bus, settings=ApiSettings(investigators={"alice": "secret"}), audit=InMemoryAuditLog()
+        )
+        resp = TestClient(app).get(
+            "/audit/whatever",
+            headers={**INVESTIGATOR_HEADERS, "X-Investigator-Reason": ""},
+        )
+        assert resp.status_code == 400
+
+    def test_correct_credentials_retrieve_the_full_record_including_score(self, keyring, bank_b):
         bus = InMemoryRiskBus(keyring)
         risk_id = risk_id_for_account(IFSC, ACCOUNT)
         bus.publish(bank_b.sign(_signal(risk_id, score=92)))
 
         audit = InMemoryAuditLog()
-        app = create_app(bus, settings=ApiSettings(admin_key="secret"), audit=audit)
+        app = create_app(bus, settings=ApiSettings(investigators={"alice": "secret"}), audit=audit)
         client = TestClient(app)
 
         transfer = client.post(
@@ -176,14 +212,27 @@ class TestAuditEndpoint:
             },
         ).json()
 
-        resp = client.get(f"/audit/{transfer['audit_ref']}", headers={"X-Admin-Key": "secret"})
+        resp = client.get(
+            f"/audit/{transfer['audit_ref']}",
+            headers=INVESTIGATOR_HEADERS,
+        )
         assert resp.status_code == 200
         record = resp.json()
         assert record["risk_score"] == 92  # only the analyst path may see this
         assert record["decision"] == "block"
 
+        # The read is attributed to the named investigator who made it, not
+        # just logged as "the admin key was used" -- see docs/SECURITY.md SS3.7.
+        access = audit.access_log
+        assert len(access) == 1
+        assert access[0].investigator_id == "alice"
+        assert access[0].reason == "fraud case #42"
+        assert access[0].found is True
+
     def test_unknown_ref_is_404(self, keyring):
         bus = InMemoryRiskBus(keyring)
-        app = create_app(bus, settings=ApiSettings(admin_key="secret"), audit=InMemoryAuditLog())
-        resp = TestClient(app).get("/audit/never-issued-ref", headers={"X-Admin-Key": "secret"})
+        app = create_app(
+            bus, settings=ApiSettings(investigators={"alice": "secret"}), audit=InMemoryAuditLog()
+        )
+        resp = TestClient(app).get("/audit/never-issued-ref", headers=INVESTIGATOR_HEADERS)
         assert resp.status_code == 404

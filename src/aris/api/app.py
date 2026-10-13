@@ -20,6 +20,7 @@ from fastapi import FastAPI, Header, HTTPException, Request
 
 from aris import __version__
 from aris.api.config import ApiSettings, load_settings
+from aris.audit_security import InvestigatorCredential
 from aris.bankbot import (
     AuditRecord,
     AuditSink,
@@ -30,7 +31,7 @@ from aris.bankbot import (
 )
 from aris.bus import RiskBus
 from aris.schema import Decision
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 
 class TransferResponse(BaseModel):
@@ -97,18 +98,36 @@ def create_app(
     def get_audit_record(
         audit_ref: str,
         request: Request,
-        x_admin_key: Annotated[str | None, Header()] = None,
+        x_investigator_id: Annotated[str | None, Header()] = None,
+        x_investigator_key: Annotated[str | None, Header()] = None,
+        x_investigator_reason: Annotated[str | None, Header()] = None,
     ) -> AuditRecord:
         api_settings: ApiSettings = request.app.state.settings
         audit_sink: AuditSink = request.app.state.audit
         # Evidence is only reachable through this authenticated path -- see
-        # BankBotDecision's docstring. An unconfigured admin key disables the
+        # BankBotDecision's docstring. No configured investigators disables the
         # endpoint entirely rather than falling back to "no auth required".
-        if api_settings.admin_key is None:
+        if not api_settings.investigators:
             raise HTTPException(status_code=503, detail="audit lookup is not configured")
-        if x_admin_key is None or not hmac.compare_digest(x_admin_key, api_settings.admin_key):
-            raise HTTPException(status_code=401, detail="missing or invalid admin key")
-        record = audit_sink.get(audit_ref)
+        if x_investigator_id is None or x_investigator_key is None:
+            raise HTTPException(status_code=401, detail="missing investigator credentials")
+        expected_key = api_settings.investigators.get(x_investigator_id)
+        if expected_key is None or not hmac.compare_digest(x_investigator_key, expected_key):
+            raise HTTPException(status_code=401, detail="unknown investigator or invalid key")
+        try:
+            # A named identity with no stated reason is still just an admin
+            # key with extra steps -- SS3.7 asks for "who and why", not just
+            # "who". InvestigatorCredential rejects a blank reason on its own,
+            # but FastAPI's Annotated[str | None, Header()] already lets a
+            # missing header through as None before pydantic ever sees it.
+            investigator = InvestigatorCredential(
+                investigator_id=x_investigator_id, reason=x_investigator_reason or ""
+            )
+        except ValidationError as exc:
+            raise HTTPException(
+                status_code=400, detail="X-Investigator-Reason is required"
+            ) from exc
+        record = audit_sink.get(audit_ref, investigator)
         if record is None:
             raise HTTPException(status_code=404, detail="no audit record for that reference")
         return record

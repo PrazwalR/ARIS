@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
 from pydantic import ValidationError
 
 from aris.attestation import Publisher, PublisherKeyring, SignedRiskSignal
+from aris.audit_security import AuditEncryptionKey, InvestigatorCredential
 from aris.bankbot import (
     _ALLOW_MESSAGE,
     _BLOCK_MESSAGE,
@@ -21,6 +22,8 @@ from aris.schema import Decision, LookupStatus, PolicyConfig, RiskSignal
 
 ACCOUNT = "ACC-999"
 IFSC = "HDFC0001234"
+
+INVESTIGATOR = InvestigatorCredential(investigator_id="test-analyst", reason="unit test")
 
 
 @pytest.fixture
@@ -285,14 +288,14 @@ class TestAuditTrail:
         audit = InMemoryAuditLog()
         bot = BankBot(empty_bus, audit=audit)
         decision = bot.pre_transaction(request(transfer_id="txn-lookup-1"))
-        entry = audit.get(decision.audit_ref)
+        entry = audit.get(decision.audit_ref, INVESTIGATOR)
         assert entry is not None
         assert entry.transfer_id == "txn-lookup-1"
 
     def test_get_returns_none_for_unknown_ref(self, empty_bus):
         audit = InMemoryAuditLog()
         BankBot(empty_bus, audit=audit).pre_transaction(request())
-        assert audit.get("never-issued") is None
+        assert audit.get("never-issued", INVESTIGATOR) is None
 
     def test_get_forgets_evicted_records(self, empty_bus):
         audit = InMemoryAuditLog(capacity=2)
@@ -300,9 +303,9 @@ class TestAuditTrail:
         bot.pre_transaction(request(transfer_id="txn-aaaaaaaa"))
         bot.pre_transaction(request(transfer_id="txn-bbbbbbbb"))
         bot.pre_transaction(request(transfer_id="txn-cccccccc"))  # evicts txn-a
-        assert audit.get("txn-aaaaaaaa") is None
-        assert audit.get("txn-bbbbbbbb") is not None
-        assert audit.get("txn-cccccccc") is not None
+        assert audit.get("txn-aaaaaaaa", INVESTIGATOR) is None
+        assert audit.get("txn-bbbbbbbb", INVESTIGATOR) is not None
+        assert audit.get("txn-cccccccc", INVESTIGATOR) is not None
 
     def test_record_captures_the_policy_that_produced_it(self, flagged_bus):
         """A past decision must be explainable under the thresholds then in force."""
@@ -329,6 +332,138 @@ class TestAuditTrail:
         for i in range(10):
             bot.pre_transaction(request(transfer_id=f"txn-{i:04d}"))
         assert audit.dropped == 0
+
+
+class TestAuditEncryptionAtRest:
+    """docs/SECURITY.md SS3.7: the reverse (account -> risk_id) table must
+    not sit in plaintext in the sink's own storage."""
+
+    def test_records_are_not_held_in_plaintext_internally(self, empty_bus):
+        audit = InMemoryAuditLog()
+        BankBot(empty_bus, audit=audit).pre_transaction(
+            request(receiver_account="ACC-SECRET-12345")
+        )
+        # The only plaintext this sink keeps outside an authenticated read is
+        # the decided_at timestamp used for retention -- never the account
+        # number, the whole point of SS3.7.
+        for blob in audit._blobs.values():
+            assert b"ACC-SECRET-12345" not in blob.ciphertext
+
+    def test_two_sinks_use_different_keys_by_default(self, empty_bus):
+        """A fresh key per instance -- no hardcoded or shared default that
+        would make 'encrypted' theater."""
+        a = InMemoryAuditLog()
+        b = InMemoryAuditLog()
+        req = request(transfer_id="txn-same-id", receiver_account="ACC-1")
+        BankBot(empty_bus, audit=a).pre_transaction(req)
+        BankBot(empty_bus, audit=b).pre_transaction(req)
+        assert a._blobs["txn-same-id"].ciphertext != b._blobs["txn-same-id"].ciphertext
+
+    def test_decrypts_correctly_with_an_explicit_key(self, empty_bus):
+        key = AuditEncryptionKey.generate()
+        audit = InMemoryAuditLog(encryption_key=key)
+        bot = BankBot(empty_bus, audit=audit)
+        bot.pre_transaction(request(transfer_id="txn-keyed1", receiver_account="ACC-KEYED"))
+        record = audit.get("txn-keyed1", INVESTIGATOR)
+        assert record is not None
+        assert record.receiver_account == "ACC-KEYED"
+
+    def test_wrong_key_cannot_decrypt_another_sinks_blob(self, empty_bus):
+        from cryptography.exceptions import InvalidTag
+
+        from aris.audit_security import decrypt_record
+
+        audit = InMemoryAuditLog(encryption_key=AuditEncryptionKey.generate())
+        BankBot(empty_bus, audit=audit).pre_transaction(request(transfer_id="txn-wrongkey"))
+        blob = audit._blobs["txn-wrongkey"]
+        wrong_key = AuditEncryptionKey.generate()
+        with pytest.raises(InvalidTag):
+            decrypt_record(wrong_key, "txn-wrongkey", blob)
+
+
+class TestAuditInvestigatorAccess:
+    """docs/SECURITY.md SS3.7: a named investigator identity + reason on
+    every single-record read, logged whether or not the record exists."""
+
+    def test_get_logs_a_successful_lookup(self, empty_bus):
+        audit = InMemoryAuditLog()
+        bot = BankBot(empty_bus, audit=audit)
+        decision = bot.pre_transaction(request(transfer_id="txn-logged"))
+        who = InvestigatorCredential(investigator_id="alice", reason="fraud case #42")
+        audit.get(decision.audit_ref, who)
+        assert len(audit.access_log) == 1
+        event = audit.access_log[0]
+        assert event.investigator_id == "alice"
+        assert event.reason == "fraud case #42"
+        assert event.audit_ref == "txn-logged"
+        assert event.found is True
+
+    def test_get_logs_a_failed_lookup_too(self, empty_bus):
+        audit = InMemoryAuditLog()
+        BankBot(empty_bus, audit=audit).pre_transaction(request())
+        who = InvestigatorCredential(investigator_id="bob", reason="checking a tip")
+        audit.get("never-issued", who)
+        assert len(audit.access_log) == 1
+        assert audit.access_log[0].found is False
+
+    def test_each_investigator_is_attributed_separately(self, empty_bus):
+        audit = InMemoryAuditLog()
+        bot = BankBot(empty_bus, audit=audit)
+        decision = bot.pre_transaction(request(transfer_id="txn-multi"))
+        audit.get(decision.audit_ref, InvestigatorCredential(investigator_id="alice", reason="r1"))
+        audit.get(decision.audit_ref, InvestigatorCredential(investigator_id="bob", reason="r2"))
+        ids = {e.investigator_id for e in audit.access_log}
+        assert ids == {"alice", "bob"}
+
+    def test_a_blank_reason_is_rejected_before_it_reaches_the_sink(self):
+        with pytest.raises(ValidationError):
+            InvestigatorCredential(investigator_id="alice", reason="   ")
+
+    def test_a_blank_investigator_id_is_rejected(self):
+        with pytest.raises(ValidationError):
+            InvestigatorCredential(investigator_id="", reason="a reason")
+
+    def test_entries_does_not_require_an_investigator_credential(self, empty_bus):
+        """`entries` is bulk introspection by code already inside the trusted
+        process (tests, the demo script) -- `get()`, not `entries`, is the
+        analyst boundary. See InMemoryAuditLog's docstring."""
+        audit = InMemoryAuditLog()
+        BankBot(empty_bus, audit=audit).pre_transaction(request())
+        assert len(audit.entries) == 1
+        assert len(audit.access_log) == 0  # entries never touches access_log
+
+
+class TestAuditRetention:
+    """docs/SECURITY.md SS3.7: a retention limit, not just a capacity bound."""
+
+    def test_a_record_past_retention_is_unreachable(self, empty_bus):
+        clock = {"now": datetime(2030, 1, 1, tzinfo=timezone.utc)}
+        audit = InMemoryAuditLog(retention=timedelta(days=30), now=lambda: clock["now"])
+        bot = BankBot(empty_bus, audit=audit, now=lambda: clock["now"])
+        bot.pre_transaction(request(transfer_id="txn-old-rec"))
+
+        clock["now"] = datetime(2030, 2, 5, tzinfo=timezone.utc)  # 35 days later
+        assert audit.get("txn-old-rec", INVESTIGATOR) is None
+        assert len(audit) == 0
+        assert audit.entries == ()
+
+    def test_a_record_inside_retention_is_still_reachable(self, empty_bus):
+        clock = {"now": datetime(2030, 1, 1, tzinfo=timezone.utc)}
+        audit = InMemoryAuditLog(retention=timedelta(days=30), now=lambda: clock["now"])
+        bot = BankBot(empty_bus, audit=audit, now=lambda: clock["now"])
+        bot.pre_transaction(request(transfer_id="txn-fresh"))
+
+        clock["now"] = datetime(2030, 1, 15, tzinfo=timezone.utc)  # 14 days later
+        assert audit.get("txn-fresh", INVESTIGATOR) is not None
+
+    def test_no_retention_configured_means_records_never_expire(self, empty_bus):
+        clock = {"now": datetime(2030, 1, 1, tzinfo=timezone.utc)}
+        audit = InMemoryAuditLog(now=lambda: clock["now"])
+        bot = BankBot(empty_bus, audit=audit, now=lambda: clock["now"])
+        bot.pre_transaction(request(transfer_id="txn-forever"))
+
+        clock["now"] = datetime(2040, 1, 1, tzinfo=timezone.utc)
+        assert audit.get("txn-forever", INVESTIGATOR) is not None
 
 
 class TestIdempotency:
