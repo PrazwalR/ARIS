@@ -2,7 +2,7 @@
 ## Master Executive & Technical Dashboard (Phases M0 through M6)
 
 **Overall Status:** **100% COMPLETE & VERIFIED**
-**Generated:** 2026-10-14 04:48:43 UTC
+**Generated:** 2026-10-14 05:27:28 UTC
 
 ---
 
@@ -10,13 +10,13 @@
 
 | Phase | Description | Key Performance Indicator | Security & Novelty | Status |
 | :--- | :--- | :--- | :--- | :---: |
-| **M0** | Cryptographic Foundation | HMAC: **79,986.24 h/s** | Keyed `risk_id`, Ed25519 signatures | **Done** |
+| **M0** | Cryptographic Foundation | HMAC: **76,849.74 h/s** | Keyed `risk_id`, Ed25519 signatures | **Done** |
 | **M1** | Federated Learning | Global FedAvg AUC: **0.7534** | Heterogeneous banks; 0 raw rows shared | **Done** |
 | **M2** | Privacy on Training | $\epsilon=7.79$ @ $\sigma=4.0$ | DP-SGD + Exact Secure Aggregation | **Done** |
 | **M3** | Kafka Shared Risk Bus | Compacted Topic: **256 Prefix Buckets** | mTLS auth, Schema Registry, Re-verification | **Done** |
-| **M4** | BankBot Pre-Tx API | API Latency p50: **0.0674 ms** | Encrypted audit log; No-score-oracle | **Done** |
+| **M4** | BankBot Pre-Tx API | API Latency p50: **0.07 ms** | Encrypted audit log; No-score-oracle | **Done** |
 | **M5** | Explainability & MLOps | Permutation SHAP + K-S Drift | Automated rollback triggers on regression | **Done** |
-| **M6** | Scale, Byzantine & Graph | Load: **3,734.7 sig/s** | Krum Byzantine defense; On-prem graph velocity | **Done** |
+| **M6** | Scale, Byzantine & Graph | Load: **3,291.32 sig/s** | Krum Byzantine defense; On-prem graph velocity | **Done** |
 
 ---
 

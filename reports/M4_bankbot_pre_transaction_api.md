@@ -7,9 +7,9 @@
 
 | Percentile | Latency | SLA Target | Status |
 | :--- | :--- | :--- | :--- |
-| **p50 (Median)** | **0.0674 ms** | < 2.0 ms | Met |
-| **p95** | **0.1133 ms** | < 5.0 ms | Met |
-| **p99** | **0.2239 ms** | < 10.0 ms | Met |
+| **p50 (Median)** | **0.07 ms** | < 2.0 ms | Met |
+| **p95** | **0.1807 ms** | < 5.0 ms | Met |
+| **p99** | **0.4424 ms** | < 10.0 ms | Met |
 
 ## 2. Policy Decisions Breakdown
 - **ALLOW Decisions:** 900 (Transfers to clean, unflagged accounts).

@@ -1,8 +1,8 @@
 {
   "total_requests": 1000,
-  "latency_p50_ms": 0.0674,
-  "latency_p95_ms": 0.1133,
-  "latency_p99_ms": 0.2239,
+  "latency_p50_ms": 0.07,
+  "latency_p95_ms": 0.1807,
+  "latency_p99_ms": 0.4424,
   "decisions": {
     "ALLOW": 900,
     "STEP_UP": 50,

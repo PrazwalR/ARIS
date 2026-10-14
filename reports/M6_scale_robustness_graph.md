@@ -17,5 +17,5 @@
 - **Privacy Outcome:** Mule networks successfully caught without centralizing graph edges or customer identities.
 
 ## 3. High-Concurrency Stress Test
-- **Throughput:** **3,734.7 signals/sec** (Concurrent threads: 10).
+- **Throughput:** **3,291.32 signals/sec** (Concurrent threads: 10).
 - **Update Integrity:** **0 lost updates** under intense contention.

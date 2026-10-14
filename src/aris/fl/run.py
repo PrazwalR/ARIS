@@ -379,7 +379,14 @@ def main(argv: list[str] | None = None) -> int:
         default=0.0,
         help="SGD momentum factor (e.g. 0.9 for faster smoother convergence)",
     )
+    parser.add_argument(
+        "--use-graph-features",
+        action="store_true",
+        help="M6+: Use multi-bank on-prem graph and receiver velocity feature stream",
+    )
     args = parser.parse_args(argv)
+
+    dataset_name = "graph-stream" if args.use_graph_features else args.dataset
 
     cfg = TrainConfig(
         num_banks=args.banks,
@@ -393,8 +400,8 @@ def main(argv: list[str] | None = None) -> int:
         dp_delta=args.dp_delta,
         secure_agg=args.secure_agg,
     )
-    report = run_experiment(dataset=args.dataset, cfg=cfg, partition=args.partition)
-    out = Path(args.out) if args.out else DATA_PROCESSED / f"m1_metrics_{args.dataset}.json"
+    report = run_experiment(dataset=dataset_name, cfg=cfg, partition=args.partition)
+    out = Path(args.out) if args.out else DATA_PROCESSED / f"m1_metrics_{dataset_name}.json"
     write_report(report, out)
 
     print(

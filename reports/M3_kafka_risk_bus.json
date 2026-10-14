@@ -5,5 +5,5 @@
   "prefix_bucketing_buckets": 256,
   "cross_process_visibility_verified": true,
   "ed25519_wire_reverification": true,
-  "lookup_throughput_ops_sec": 12597.89
+  "lookup_throughput_ops_sec": 9963.92
 }

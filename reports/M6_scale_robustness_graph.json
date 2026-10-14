@@ -3,6 +3,6 @@
   "krum_aggregated_weight": 0.1,
   "graph_stream_auc": 1.0,
   "graph_stream_pr_auc": 1.0,
-  "load_test_throughput_signals_sec": 3734.7,
+  "load_test_throughput_signals_sec": 3291.32,
   "load_test_lost_updates": 0
 }
