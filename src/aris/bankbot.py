@@ -16,7 +16,7 @@ from collections import OrderedDict, deque
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
-from typing import Final
+from typing import Any, Final
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 

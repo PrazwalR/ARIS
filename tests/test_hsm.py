@@ -17,11 +17,13 @@ from pathlib import Path
 
 import pytest
 
+# Imports below must follow importorskip so a missing optional [hsm] extra
+# skips this module instead of erroring at collection.
 pkcs11 = pytest.importorskip("pkcs11", reason="pkcs11 not installed (optional [hsm] extra)")
-from pkcs11 import Attribute, Mechanism
+from pkcs11 import Attribute, Mechanism  # noqa: E402
 
-from aris.hashing import current_epoch
-from aris.hsm import (
+from aris.hashing import current_epoch  # noqa: E402
+from aris.hsm import (  # noqa: E402
     HsmNotConfigured,
     generate_consortium_key,
     get_consortium_key,

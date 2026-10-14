@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import numpy as np
-import pytest
-
 from aris.fl.config import TrainConfig
 from aris.fl.graph_features import (
     OnPremGraphFeatureExtractor,
@@ -31,7 +28,8 @@ def test_graph_feature_extractor_basic() -> None:
     )
     f1 = extractor.extract_features(rec1, update_history=True)
     assert len(f1) == 8
-    # amount, log1p, fan_in_1h, fan_in_24h, remitter_bank_count_24h, velocity_ratio, count_1h, novel_remitter
+    # amount, log1p, fan_in_1h, fan_in_24h, remitter_bank_count_24h,
+    # velocity_ratio, count_1h, novel_remitter
     assert f1[0] == 100.0
     assert f1[2] == 0.0  # fan_in_1h prior to this tx
     assert f1[7] == 1.0  # novel remitter

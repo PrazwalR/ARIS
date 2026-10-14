@@ -55,7 +55,9 @@ def load_dataset(
         return load_paysim(max_rows=max_rows)
     if key in {"ieee-cis", "ieee", "ieee_cis"}:
         return load_ieee_cis(max_rows=max_rows)
-    raise ValueError(f"Unknown dataset {name!r}. Use synthetic | graph-stream | ulb | paysim | ieee-cis")
+    raise ValueError(
+        f"Unknown dataset {name!r}. Use synthetic | graph-stream | ulb | paysim | ieee-cis"
+    )
 
 
 def ensure_ulb_csv(dest: Path | None = None) -> Path:

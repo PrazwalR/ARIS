@@ -144,4 +144,3 @@ def heterogeneous_bank_shards(
         perm = rng.permutation(split_idx)
         shards.append((x_sorted[perm], y_sorted[perm]))
     return shards
-

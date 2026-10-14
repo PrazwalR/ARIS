@@ -614,4 +614,3 @@ class TestKeyEpochRotation:
         decision = bot.pre_transaction(request())
         assert decision.decision is Decision.BLOCK
         assert audit.entries[0].risk_id == oprf_risk_id
-

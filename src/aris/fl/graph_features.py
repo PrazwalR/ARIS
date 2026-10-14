@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Any
+from typing import ClassVar
 
 import numpy as np
 import numpy.typing as npt
@@ -53,7 +53,7 @@ class OnPremGraphFeatureExtractor:
     Only the resulting engineered numerical features enter the local MLP model.
     """
 
-    FEATURE_NAMES = [
+    FEATURE_NAMES: ClassVar[list[str]] = [
         "amount",
         "log_amount",
         "fan_in_1h",
@@ -96,7 +96,11 @@ class OnPremGraphFeatureExtractor:
         # 1-hour window calculations
         senders_1h: set[tuple[str, str]] = set()
         count_1h = 0
-        for ts, s in zip(history.timestamps, history.senders):
+        # timestamps/senders are always appended and pruned together (see
+        # ReceiverHistory.prune and the append block below), so strict=True
+        # turns any future break of that invariant into a loud error instead
+        # of zip() silently truncating to the shorter list.
+        for ts, s in zip(history.timestamps, history.senders, strict=True):
             if ts >= one_hour_ago:
                 senders_1h.add(s)
                 count_1h += 1
@@ -165,14 +169,12 @@ def generate_multi_bank_transaction_stream(
     # Pool of legitimate users per bank
     users_per_bank = 100
     bank_accounts = {
-        ifsc: [f"ACC-{ifsc[-4:]}-{1000 + j}" for j in range(users_per_bank)]
-        for ifsc in bank_ifscs
+        ifsc: [f"ACC-{ifsc[-4:]}-{1000 + j}" for j in range(users_per_bank)] for ifsc in bank_ifscs
     }
 
     # Designated mule receiver accounts across banks
     mule_accounts = [
-        (bank_ifscs[i % num_banks], f"MULE-REC-{5000 + i}")
-        for i in range(max(num_banks, 4))
+        (bank_ifscs[i % num_banks], f"MULE-REC-{5000 + i}") for i in range(max(num_banks, 4))
     ]
 
     records: list[TransactionRecord] = []

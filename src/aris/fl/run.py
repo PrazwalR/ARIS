@@ -183,11 +183,17 @@ def _train_local_baselines(
     rows = []
     epoch_trajectories = []
     total_epochs = cfg.local_epochs * cfg.rounds
-    print(f"\n{'='*32} LOCAL BANK BASELINES TRAINING ({total_epochs} EPOCHS) {'='*32}")
+    print(f"\n{'=' * 32} LOCAL BANK BASELINES TRAINING ({total_epochs} EPOCHS) {'=' * 32}")
     for i, client in enumerate(clients):
         model = new_model(client.x.shape[1], hidden=cfg.hidden, seed=cfg.seed + 100 + i)
-        print(f"\n>>> Training Local Baseline: {client.bank_id} ({len(client.y)} samples, {int(client.y.sum())} fraud) <<<")
-        print(f"{'Epoch':^7} | {'Loss':^9} | {'Holdout Acc':^11} | {'ROC-AUC':^9} | {'PR-AUC':^9} | {'Precision':^9} | {'Recall':^9}")
+        print(
+            f"\n>>> Training Local Baseline: {client.bank_id} "
+            f"({len(client.y)} samples, {int(client.y.sum())} fraud) <<<"
+        )
+        print(
+            f"{'Epoch':^7} | {'Loss':^9} | {'Holdout Acc':^11} | {'ROC-AUC':^9} | "
+            f"{'PR-AUC':^9} | {'Precision':^9} | {'Recall':^9}"
+        )
         print("-" * 75)
         for ep in range(1, total_epochs + 1):
             train_metrics = train_local(
@@ -213,7 +219,8 @@ def _train_local_baselines(
             if ep == 1 or ep % max(1, total_epochs // 5) == 0 or ep == total_epochs:
                 print(
                     f"{ep:^7d} | {loss_val:^9.4f} | {m['accuracy_at_0_5']:^11.4f} | "
-                    f"{m['auc']:^9.4f} | {m['pr_auc']:^9.4f} | {m['precision_at_0_5']:^9.4f} | {m['recall_at_0_5']:^9.4f}"
+                    f"{m['auc']:^9.4f} | {m['pr_auc']:^9.4f} | "
+                    f"{m['precision_at_0_5']:^9.4f} | {m['recall_at_0_5']:^9.4f}"
                 )
         scores = predict_scores(model, x_te)
         final_m = classification_metrics(y_te, scores)
@@ -251,7 +258,10 @@ def _federated_train(
     dp_steps_per_client: dict[str, int] = {c.bank_id: 0 for c in clients}
     round_trajectories: list[dict[str, Any]] = []
 
-    print(f"\n{'='*30} FEDERATED LEARNING ({cfg.rounds} ROUNDS x {cfg.local_epochs} LOCAL EPOCHS) {'='*30}")
+    print(
+        f"\n{'=' * 30} FEDERATED LEARNING "
+        f"({cfg.rounds} ROUNDS x {cfg.local_epochs} LOCAL EPOCHS) {'=' * 30}"
+    )
 
     for rnd in range(1, cfg.rounds + 1):
         config = {
@@ -296,26 +306,36 @@ def _federated_train(
             global_scores = predict_scores(temp_global, x_te)
             global_m = classification_metrics(y_te, global_scores)
 
-            print(f"\n[Round {rnd}/{cfg.rounds}] Federated Evaluation across Banks & Global Consensus:")
-            print(f"{'Entity':^9} | {'Loss':^9} | {'Holdout Acc':^11} | {'ROC-AUC':^9} | {'PR-AUC':^9} | {'Precision':^9} | {'Recall':^9}")
+            print(
+                f"\n[Round {rnd}/{cfg.rounds}] Federated Evaluation across "
+                "Banks & Global Consensus:"
+            )
+            print(
+                f"{'Entity':^9} | {'Loss':^9} | {'Holdout Acc':^11} | {'ROC-AUC':^9} | "
+                f"{'PR-AUC':^9} | {'Precision':^9} | {'Recall':^9}"
+            )
             print("-" * 77)
             for c in clients:
                 cm = client_evals.get(c.bank_id, {})
                 print(
-                    f"{c.bank_id:^9} | {cm.get('loss', 0.0):^9.4f} | {cm.get('accuracy_at_0_5', 0.0):^11.4f} | "
+                    f"{c.bank_id:^9} | {cm.get('loss', 0.0):^9.4f} | "
+                    f"{cm.get('accuracy_at_0_5', 0.0):^11.4f} | "
                     f"{cm.get('auc', 0.0):^9.4f} | {cm.get('pr_auc', 0.0):^9.4f} | "
-                    f"{cm.get('precision_at_0_5', 0.0):^9.4f} | {cm.get('recall_at_0_5', 0.0):^9.4f}"
+                    f"{cm.get('precision_at_0_5', 0.0):^9.4f} | "
+                    f"{cm.get('recall_at_0_5', 0.0):^9.4f}"
                 )
             print(
                 f"{'GLOBAL':^9} | {'--':^9} | {global_m['accuracy_at_0_5']:^11.4f} | "
                 f"{global_m['auc']:^9.4f} | {global_m['pr_auc']:^9.4f} | "
                 f"{global_m['precision_at_0_5']:^9.4f} | {global_m['recall_at_0_5']:^9.4f}"
             )
-            round_trajectories.append({
-                "round": rnd,
-                "clients": client_evals,
-                "global": global_m,
-            })
+            round_trajectories.append(
+                {
+                    "round": rnd,
+                    "clients": client_evals,
+                    "global": global_m,
+                }
+            )
 
     return weights, logs, dp_steps_per_client, round_trajectories
 
@@ -348,7 +368,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--banks", type=int, default=5)
     parser.add_argument("--rounds", type=int, default=8)
     parser.add_argument("--epochs", type=int, default=4)
-    parser.add_argument("--partition", default="auto", choices=("auto", "temporal", "dirichlet", "heterogeneous"))
+    parser.add_argument(
+        "--partition", default="auto", choices=("auto", "temporal", "dirichlet", "heterogeneous")
+    )
     parser.add_argument(
         "--max-rows",
         type=int,
