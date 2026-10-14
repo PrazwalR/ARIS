@@ -1,0 +1,44 @@
+{
+  "privacy_guarantee": "DP-SGD + zCDP (Zero-Concentrated Differential Privacy)",
+  "delta": 1e-05,
+  "steps_per_client": 32,
+  "noise_sweep": [
+    {
+      "noise_multiplier": 0.5,
+      "epsilon_upper_bound": 118.29,
+      "global_auc": 0.5727
+    },
+    {
+      "noise_multiplier": 1.0,
+      "epsilon_upper_bound": 43.14,
+      "global_auc": 0.5736
+    },
+    {
+      "noise_multiplier": 2.0,
+      "epsilon_upper_bound": 17.57,
+      "global_auc": 0.5757
+    },
+    {
+      "noise_multiplier": 4.0,
+      "epsilon_upper_bound": 7.79,
+      "global_auc": 0.5814
+    },
+    {
+      "noise_multiplier": 8.0,
+      "epsilon_upper_bound": 3.64,
+      "global_auc": 0.599
+    },
+    {
+      "noise_multiplier": 15.0,
+      "epsilon_upper_bound": 1.88,
+      "global_auc": 0.635
+    },
+    {
+      "noise_multiplier": 30.0,
+      "epsilon_upper_bound": 0.92,
+      "global_auc": 0.6544
+    }
+  ],
+  "secure_aggregation_mask_cancellation_diff": 0.0,
+  "secure_aggregation_exact": true
+}

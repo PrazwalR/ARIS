@@ -1,0 +1,14 @@
+{
+  "total_requests": 1000,
+  "latency_p50_ms": 0.0674,
+  "latency_p95_ms": 0.1133,
+  "latency_p99_ms": 0.2239,
+  "decisions": {
+    "ALLOW": 900,
+    "STEP_UP": 50,
+    "BLOCK": 50
+  },
+  "audit_trail_entries": 1000,
+  "encrypted_at_rest": true,
+  "no_score_oracle_enforced": true
+}

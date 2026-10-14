@@ -1,0 +1,11 @@
+{
+  "shap_top_features": [
+    "f3",
+    "f0"
+  ],
+  "shap_dominant_attribution": "f3",
+  "drift_detected_features": [
+    "f1"
+  ],
+  "model_registry_rollback_triggered": true
+}

@@ -1,0 +1,56 @@
+{
+  "dataset": "ulb",
+  "num_banks": 5,
+  "rounds": 8,
+  "local_epochs": 4,
+  "mean_local_auc": 0.8824,
+  "global_fedavg_auc": 0.7534,
+  "mean_local_pr_auc": 0.4236,
+  "global_fedavg_pr_auc": 0.0754,
+  "global_accuracy_at_0_5": 0.3767,
+  "global_precision_at_0_5": 0.0197,
+  "global_recall_at_0_5": 1.0,
+  "global_beats_mean_local_auc": false,
+  "bank_breakdown": [
+    {
+      "bank_id": "BANK-A",
+      "samples": 4800,
+      "positives": 141,
+      "auc": 0.8988,
+      "pr_auc": 0.0868,
+      "accuracy": 0.8765
+    },
+    {
+      "bank_id": "BANK-B",
+      "samples": 4800,
+      "positives": 70,
+      "auc": 0.7537,
+      "pr_auc": 0.0913,
+      "accuracy": 0.306
+    },
+    {
+      "bank_id": "BANK-C",
+      "samples": 4800,
+      "positives": 52,
+      "auc": 0.8753,
+      "pr_auc": 0.5635,
+      "accuracy": 0.9872
+    },
+    {
+      "bank_id": "BANK-D",
+      "samples": 4800,
+      "positives": 101,
+      "auc": 0.9414,
+      "pr_auc": 0.6426,
+      "accuracy": 0.9927
+    },
+    {
+      "bank_id": "BANK-E",
+      "samples": 4800,
+      "positives": 53,
+      "auc": 0.9427,
+      "pr_auc": 0.7338,
+      "accuracy": 0.996
+    }
+  ]
+}

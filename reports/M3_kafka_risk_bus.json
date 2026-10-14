@@ -1,0 +1,9 @@
+{
+  "topic": "risk-signals",
+  "serialization_format": "Confluent Wire Format + JSON Schema",
+  "topic_compaction_key": "risk_id:source_bank_id",
+  "prefix_bucketing_buckets": 256,
+  "cross_process_visibility_verified": true,
+  "ed25519_wire_reverification": true,
+  "lookup_throughput_ops_sec": 12597.89
+}
