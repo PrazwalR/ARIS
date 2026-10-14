@@ -29,9 +29,8 @@ through the PKCS#11 API this module uses. That is the gap a real HSM closes
 that no software stand-in can, and it is why this remains the one item in
 docs/SECURITY.md's priority list not claimed as more than partially closed.
 
-Not wired into the rest of the bus, same as ``aris.oprf``:
-``aris.hashing.risk_id_for_account`` is still what ``BankBot`` and
-``KafkaRiskBus`` use.
+Wired in through ``aris.risk_id.HsmRiskIdDeriver`` (``ARIS_API_RISK_ID_MODE=hsm``
+for the BankBot API).
 """
 
 from __future__ import annotations

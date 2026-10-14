@@ -37,11 +37,8 @@ base-mode (non-verifiable) DH-OPRF would not give without an added DLEQ
 proof. It is not a drop-in RFC 9497 implementation and does not claim to be
 one.
 
-Not wired into the rest of the bus. `aris.hashing.risk_id_for_account` (the
-HMAC-based derivation) is still what `BankBot`, `KafkaRiskBus`, and the demo
-use. Swapping it for this would touch `TransferRequest`, every publisher call
-site, and most of the existing test suite -- a decision left for whoever
-reviews this module, not made here.
+Wired in through `aris.risk_id.OprfRiskIdDeriver`; `aris.oprf_service` serves
+an authority over HTTP for banks in other processes.
 """
 
 from __future__ import annotations
@@ -193,16 +190,29 @@ class OprfAuthority:
         rate_window_s: float = DEFAULT_RATE_WINDOW_S,
         now: Callable[[], float] = time.monotonic,
         audit_log_capacity: int = DEFAULT_AUDIT_LOG_CAPACITY,
+        private_key: rsa.RSAPrivateKey | None = None,
     ) -> None:
         if rate_limit < 1:
             raise ValueError("rate_limit must be positive")
         if audit_log_capacity < 1:
             raise ValueError("audit_log_capacity must be positive")
-        private_key = rsa.generate_private_key(public_exponent=65537, key_size=key_size)
+        # A persisted key is what a long-lived authority needs: every risk_id
+        # is a function of this key, so a fresh one on restart would orphan
+        # every signal already on the bus. Generated only when none is given.
+        if private_key is None:
+            private_key = rsa.generate_private_key(public_exponent=65537, key_size=key_size)
         numbers = private_key.private_numbers()
         self._n = numbers.public_numbers.n
         self._e = numbers.public_numbers.e
+        # Kept for tests, which check evaluate() against a plain full-size
+        # pow(x, d, n) as an independent oracle for the CRT path below.
         self._d = numbers.d
+        # CRT components: evaluating mod p and mod q separately is the
+        # standard ~3-4x speedup over one full-size pow(x, d, n), and this is
+        # the per-lookup cost every transfer pays. Output is identical, and
+        # every evaluation is checked against the public key by the client.
+        self._p, self._q = numbers.p, numbers.q
+        self._dmp1, self._dmq1, self._iqmp = numbers.dmp1, numbers.dmq1, numbers.iqmp
         self._rate_limit = rate_limit
         self._rate_window_s = rate_window_s
         self._now = now
@@ -247,7 +257,33 @@ class OprfAuthority:
                 )
             window.append(now)
             self._audit_log.append(OprfQueryRecord(bank_id=bank_id, at=now))
-        return pow(blinded, self._d, self._n)
+        m1 = pow(blinded, self._dmp1, self._p)
+        m2 = pow(blinded, self._dmq1, self._q)
+        h = (self._iqmp * (m1 - m2)) % self._p
+        return m2 + h * self._q
+
+
+def public_key_fingerprint(n: int, e: int) -> str:
+    """SHA-256 over the authority's public numbers. Pinned by clients that
+    reach an authority over a network: a response verifies only against the
+    key the *server* advertised, so without a pin a spoofed authority could
+    hand out self-consistent but wrong ids -- every lookup then misses, and a
+    miss resolves to allow."""
+    material = n.to_bytes(_n_bytes(n), "big") + b"|" + e.to_bytes(8, "big")
+    return hashlib.sha256(material).hexdigest()
+
+
+class AuthorityKeyMismatch(Exception):
+    """An authority advertised a public key other than the pinned one."""
+
+
+def check_pinned_key(n: int, e: int, expected_fingerprint: str) -> None:
+    actual = public_key_fingerprint(n, e)
+    if not secrets.compare_digest(actual, expected_fingerprint.strip().lower()):
+        raise AuthorityKeyMismatch(
+            f"authority public key fingerprint {actual} does not match the pinned "
+            f"{expected_fingerprint}"
+        )
 
 
 def risk_id_for_account_oprf(

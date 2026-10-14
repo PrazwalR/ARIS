@@ -44,8 +44,8 @@ mypy
 ARIS_SALT=$(python -c "import secrets;print(secrets.token_hex(32))") pytest -p no:warnings
 ```
 
-Expect: `All checks passed!`, `Success: no issues found in 35 source files`,
-a progress line of dots, then **`331 passed in ~50s`**. `ARIS_SALT` is
+Expect: `All checks passed!`, `Success: no issues found in 40 source files`,
+a progress line of dots, then **`407 passed in ~50s`** (with `docker compose up -d` and SoftHSM2 installed; without them the Kafka/mTLS/HSM suites skip cleanly). `ARIS_SALT` is
 generated fresh and thrown away on purpose — proves the code fails closed
 with no key configured, rather than falling back to a default, and the
 suite provides its own key for the parts that need one.
@@ -230,6 +230,22 @@ HSM" — the honest answer is in the review doc: no hardware was available,
 and SoftHSM2 is a real PKCS#11 implementation, not a mock, but it can't
 demonstrate hardware-level protection against a compromised host OS reading
 its on-disk store directly.
+
+### 4c. OPRF-derived risk_ids, three live processes (docs/SECURITY.md §3.1)
+
+**Shows:** no bank can compute a receiver's risk_id on its own. Bank B asks
+the consortium authority (blinded — the authority never sees the account),
+publishes to live Kafka; Bank A's API, a separate process, asks the same
+authority and blocks the transfer. Three OS processes, sharing only the network.
+
+```bash
+python scripts/e2e_live_oprf.py
+```
+
+Expect 11 `[PASS]` lines and `ALL CHECKS PASSED`: block for the flagged
+receiver, allow for a clean one, the investigator path returning the same OPRF
+id Bank B published, and the authority refusing a wrong bank key and a client
+pinned to a different authority key. Needs `docker compose up -d` from step 0.
 
 ---
 

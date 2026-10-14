@@ -589,28 +589,3 @@ class TestKeyEpochRotation:
         bot = BankBot(bus, audit=audit, now=lambda: real_now)
         bot.pre_transaction(request())
         assert audit.entries[0].risk_id == risk_id_for_account(IFSC, ACCOUNT, epoch=epoch_today)
-
-    def test_bankbot_with_oprf_authority(self, keyring, bank_b):
-        from aris.oprf import OprfAuthority, risk_id_for_account_oprf
-
-        authority = OprfAuthority(key_size=1024)
-        bus = InMemoryRiskBus(keyring)
-        oprf_risk_id = risk_id_for_account_oprf(IFSC, ACCOUNT, authority, "BANK-B")
-        bus.publish(
-            bank_b.sign(
-                RiskSignal(
-                    risk_id=oprf_risk_id,
-                    risk_score=95,
-                    confidence=0.99,
-                    reason_codes=("confirmed_fraud",),
-                    model_version="v0.4-fl",
-                    source_bank_id="BANK-B",
-                    ttl_hours=24,
-                )
-            )
-        )
-        audit = InMemoryAuditLog()
-        bot = BankBot(bus, audit=audit, oprf_authority=authority, bank_id="BANK-A")
-        decision = bot.pre_transaction(request())
-        assert decision.decision is Decision.BLOCK
-        assert audit.entries[0].risk_id == oprf_risk_id

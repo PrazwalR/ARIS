@@ -30,6 +30,7 @@ from aris.bankbot import (
     TransferRequest,
 )
 from aris.bus import RiskBus
+from aris.risk_id import RiskIdDeriver
 from aris.schema import Decision
 from pydantic import BaseModel, ConfigDict, ValidationError
 
@@ -64,10 +65,11 @@ def create_app(
     bus: RiskBus,
     settings: ApiSettings | None = None,
     audit: AuditSink | None = None,
+    risk_ids: RiskIdDeriver | None = None,
 ) -> FastAPI:
     settings = settings or load_settings()
     audit = audit if audit is not None else InMemoryAuditLog()
-    bot = BankBot(bus, policy=settings.policy, audit=audit)
+    bot = BankBot(bus, policy=settings.policy, audit=audit, risk_ids=risk_ids)
 
     app = FastAPI(title="ARIS BankBot API", version=__version__)
     # Per-instance state, not module-level: create_app() can be called more

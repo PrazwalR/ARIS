@@ -40,7 +40,7 @@ Adversaries we design against, in rough order of likelihood:
 
 ## 3. Known limitations — accepted for M0
 
-### 3.1 Pseudonymity does not hold against a member bank — *critical, by construction* — done (not wired in)
+### 3.1 Pseudonymity does not hold against a member bank — *critical, by construction* — done (wired in)
 
 `risk_id` is a keyed hash of a low-entropy input, and every member holds the key. On
 the order of 10⁹ live accounts can be enumerated offline on one GPU in well under a
@@ -62,7 +62,7 @@ unbounded, silent, retroactive compromise into a bounded, logged, prospective on
 the contribution is not "we hash the account number" — that is neither novel nor sound —
 but a bus design whose privacy failure mode is explicit and bounded.
 
-**Done, but not a literal RFC 9497 implementation, and not wired in:** `aris/oprf.py`
+**Done, but not a literal RFC 9497 implementation:** `aris/oprf.py`
 builds an RSA-FDH blind signature (Chaum 1982, full-domain hash per RFC 8017 §B.2.1's
 MGF1) instead of an RFC 9497 Diffie-Hellman OPRF. Checked before writing anything: the
 `pynacl` build available in this environment has no ristretto255 bindings; raw
@@ -75,13 +75,51 @@ the private key, `risk_id_for_account_oprf` blinds a query so the authority neve
 against the authority's own public key (`OprfVerificationError` if it doesn't match) —
 and is `tests/test_oprf.py`-verified: determinism across independent sessions, blinding
 unlinkability, a misbehaving-authority key mismatch actually being caught, rate limits
-enforced and independent per bank, and a bounded audit log. **Not wired into
-`BankBot`/`KafkaRiskBus`/the demo** — `risk_id_for_account` (HMAC-based, §3.2's daily
-epochs already applied) is still what they use. Swapping it in touches
-`TransferRequest`, every publisher call site, and most of the existing test suite, and
-RSA-2048 modular exponentiation is real added latency per lookup on top of whatever the
-authority's own network round trip costs — a decision for whoever reviews this module,
-not made here.
+enforced and independent per bank, and a bounded audit log.
+
+**Wired in, end to end.** `aris/risk_id.py` puts every derivation scheme behind one
+`RiskIdDeriver` interface — HMAC (the default), HSM (§3.6), OPRF — and `BankBot` takes
+one instead of hard-coding `risk_id_for_account`. Publisher and checker have to use the
+*same* scheme or a flag is never found and the miss resolves to allow, so there is now a
+single deployment switch for both (`tests/test_risk_id.py::test_schemes_do_not_interoperate`
+pins that hazard down). `aris/oprf_service.py` runs the authority as its own network
+service (`python -m aris.oprf_service`): `POST /evaluate` takes only a blinded value,
+authenticates the calling bank and attributes the query to *that* bank (not to a bank
+id the caller merely claims), and maps the per-bank rate limit to HTTP 429.
+`HttpOprfAuthorityClient` satisfies the existing `OprfAuthorityClient` protocol, so the
+in-process and networked authorities are interchangeable. The BankBot API selects the
+scheme with `ARIS_API_RISK_ID_MODE=hmac|hsm|oprf`.
+
+Three properties the wiring adds that the in-process construction did not need:
+
+- **The authority's key is pinned.** A response verifies only against the key the
+  *server* advertises, so without a pin a spoofed authority could hand out
+  self-consistent but wrong ids — every lookup misses, and a miss resolves to allow.
+  The client requires an `ARIS_API_OPRF_FINGERPRINT` and checks it at API startup, so a
+  wrong or unreachable authority stops the process instead of degrading every transfer.
+- **Authority unavailability fails closed.** A rate-limited, unreachable or
+  unverifiable authority means the bank cannot learn whether a receiver is flagged;
+  `BankBot` treats that exactly like a bus outage (`on_bus_unavailable`, step-up by
+  default — never allow), recorded with `lookup_status=unavailable`.
+- **The authority key persists.** Every risk_id is a function of it, so a fresh key on
+  restart would orphan every signal on the bus. The service loads a PEM key and only
+  creates one when explicitly told to (`--generate-key`, written `0600`).
+
+Verified live, not only in-process: `scripts/e2e_live_oprf.py` runs the authority,
+Bank A's BankBot API (Kafka-backed, OPRF mode) and Bank B's publisher as three separate
+OS processes sharing only the network, and checks that a flagged receiver is blocked, an
+unflagged one allowed, the investigator path returns the OPRF id Bank B published, and
+the authority rejects a wrong bank key and a mis-pinned client.
+
+**Cost, measured:** an OPRF lookup adds one RSA-2048 private-key operation on the
+authority plus its network round trip. With the authority evaluating via CRT, that is
+~8 ms in-process and ~9 ms through the HTTP stack on a laptop (HMAC: ~0.01 ms) — before
+real network latency. Default stays HMAC; OPRF is a deployment choice with that cost.
+
+**Remaining gap, stated plainly:** bank-to-authority authentication is a per-bank shared
+secret over plain HTTP. A real deployment puts the service behind the same mTLS +
+per-principal identity §3.8 built for Kafka; the attribution and rate-limit logic would
+not change.
 
 ### 3.2 No key rotation support — *high* — done
 
@@ -223,9 +261,12 @@ cannot demonstrate is hardware-level key protection: a compromised host OS can s
 read SoftHSM2's on-disk token store directly, just not through the PKCS#11 API this
 module uses — that is the gap a real HSM closes that no software stand-in can, which is
 why this is marked done against the software-verifiable half of the requirement, not
-claimed as a hardware-equivalent guarantee. **Not wired into the rest of the bus**,
-same as §3.1's OPRF construction: `aris.hashing.load_salt`/`risk_id_for_account` is
-still what `BankBot` and `KafkaRiskBus` use.
+claimed as a hardware-equivalent guarantee. **Wired in** through the same
+`aris/risk_id.py` interface as §3.1: `HsmRiskIdDeriver` derives under the token-resident
+key, `ARIS_API_RISK_ID_MODE=hsm` makes the BankBot API open the token (from
+`ARIS_HSM_MODULE`/`ARIS_HSM_TOKEN_LABEL`/`ARIS_HSM_PIN`) for the process's lifetime, and
+startup fails closed when the key is not provisioned. `tests/test_hsm.py` checks a flag
+published under the HSM key blocks a transfer, against a real SoftHSM2 token.
 
 ### 3.7 The audit log is a plaintext reverse table — *medium* — done
 
@@ -349,20 +390,17 @@ plaintext listener entirely rather than run both side by side.
 | 2 | Key on `(IFSC, account)`, length-prefixed | 3.3 | 0.5 d | ✅ done |
 | 3 | Prefix-bucket lookup | 3.4 | 0.5 d (actual: re-scoped, ~1 d) | ✅ done |
 | 4 | Quantise timestamp, round confidence | 3.5 | 1 h | ✅ done (jitter, score bucketing still open) |
-| 5 | OPRF-derived `risk_id` | 3.1 | 3–5 d | ✅ done (RSA-FDH, not RFC 9497; not wired in) |
-| 6 | HSM-resident key | 3.6 | 2–3 d | ✅ done (SoftHSM2; real HSM hardware not available) |
+| 5 | OPRF-derived `risk_id` | 3.1 | 3–5 d | ✅ done, wired in (RSA-FDH, not RFC 9497) |
+| 6 | HSM-resident key | 3.6 | 2–3 d | ✅ done, wired in (SoftHSM2; real HSM hardware not available) |
 | 7 | mTLS + per-bank Kafka ACLs | 3.8 | 1–2 d | ✅ done |
 | 8 | Encrypted, access-controlled audit log | 3.7 | 1 d | ✅ done |
 
 Items 1–4 were independent of the OPRF and worth doing regardless — all eight items in
-this table are now built, though two (§3.1's OPRF-equivalent, §3.6's HSM-resident key)
-have real, stated gaps rather than closing their section outright: neither is wired
-into `risk_id_for_account`'s call sites (§3.1's own text: HSM-resident HMAC plus daily
-epochs already gets most of the OPRF's benefit with no new cryptography — the remaining
-gap is that each bank then rate-limits *itself*, whereas an OPRF-style authority puts
-that limit in a counterparty's hands, the difference between a control and a promise),
-and §3.6 is verified against SoftHSM2, a real PKCS#11 software token, not real HSM
-hardware this project has no access to.
+this table are now built and wired into `BankBot` and the API through
+`aris/risk_id.py`. Two keep real, stated gaps: §3.1's authority authenticates banks by
+shared secret over plain HTTP rather than §3.8's mTLS, and §3.6 is verified against
+SoftHSM2, a real PKCS#11 software token, not real HSM hardware this project has no
+access to.
 
 ## 5. Reporting
 

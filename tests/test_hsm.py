@@ -13,6 +13,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -219,3 +220,74 @@ class TestRiskIdDerivation:
             a = risk_id_for_account_hsm("HDFC0001234", "ACC-999", key1, epoch=epoch)
             b = risk_id_for_account_hsm("HDFC0001234", "ACC-999", key2, epoch=epoch)
             assert a != b
+
+
+@requires_softhsm
+class TestWiredThroughBankBotAndApi:
+    """SS3.6 wired in: the HSM-resident key is what both publisher and BankBot
+    derive under, and `python -m aris.api` can be configured to use it."""
+
+    def test_flag_published_under_the_hsm_key_blocks(self, hsm_config, keyring, bank_b):
+        from aris.bankbot import BankBot, TransferRequest
+        from aris.bus import InMemoryRiskBus
+        from aris.risk_id import HsmRiskIdDeriver, publish_id
+        from aris.schema import Decision, RiskSignal
+
+        now = datetime.now(timezone.utc)
+        with open_hsm_session(**hsm_config) as session:
+            generate_consortium_key(session, label="wired-key")
+            ids = HsmRiskIdDeriver(get_consortium_key(session, label="wired-key"))
+            bus = InMemoryRiskBus(keyring)
+            bus.publish(
+                bank_b.sign(
+                    RiskSignal(
+                        risk_id=publish_id(ids, "HDFC0001234", "ACC-999", now),
+                        risk_score=95,
+                        confidence=0.99,
+                        reason_codes=("confirmed_fraud",),
+                        model_version="v0.4-fl",
+                        source_bank_id="BANK-B",
+                    )
+                )
+            )
+            decision = BankBot(bus, risk_ids=ids).pre_transaction(
+                TransferRequest(
+                    user_ref="anu",
+                    bank_id="BANK-A",
+                    receiver_ifsc="HDFC0001234",
+                    receiver_account="ACC-999",
+                    amount_minor=500_000,
+                )
+            )
+        assert decision.decision is Decision.BLOCK
+
+    def test_api_hsm_mode_opens_the_token_from_env(self, hsm_config, monkeypatch):
+        from contextlib import ExitStack
+
+        from aris.api.config import ApiSettings
+        from aris.api.wiring import build_risk_ids
+        from aris.risk_id import HsmRiskIdDeriver
+
+        with open_hsm_session(**hsm_config) as session:
+            generate_consortium_key(session, label="api-key")
+        monkeypatch.setenv("ARIS_HSM_MODULE", hsm_config["module_path"])
+        monkeypatch.setenv("ARIS_HSM_TOKEN_LABEL", hsm_config["token_label"])
+        monkeypatch.setenv("ARIS_HSM_PIN", hsm_config["user_pin"])
+        with ExitStack() as resources:
+            settings = ApiSettings(risk_id_mode="hsm", hsm_key_label="api-key")
+            ids = build_risk_ids(settings, resources)
+            assert isinstance(ids, HsmRiskIdDeriver)
+            first, previous = ids.candidates("HDFC0001234", "ACC-999", datetime.now(timezone.utc))
+            assert first != previous  # current and previous epoch subkeys differ
+
+    def test_api_hsm_mode_fails_closed_without_a_provisioned_key(self, hsm_config, monkeypatch):
+        from contextlib import ExitStack
+
+        from aris.api.config import ApiSettings
+        from aris.api.wiring import build_risk_ids
+
+        monkeypatch.setenv("ARIS_HSM_MODULE", hsm_config["module_path"])
+        monkeypatch.setenv("ARIS_HSM_TOKEN_LABEL", hsm_config["token_label"])
+        monkeypatch.setenv("ARIS_HSM_PIN", hsm_config["user_pin"])
+        with ExitStack() as resources, pytest.raises(HsmNotConfigured):
+            build_risk_ids(ApiSettings(risk_id_mode="hsm", hsm_key_label="absent"), resources)

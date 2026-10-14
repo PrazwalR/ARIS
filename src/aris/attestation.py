@@ -91,6 +91,20 @@ class Publisher:
         return SignedRiskSignal(signal, self._private_key.sign(canonical_bytes(signal)))
 
 
+def public_key_to_hex(public_key: Ed25519PublicKey) -> str:
+    return public_key.public_bytes_raw().hex()
+
+
+def public_key_from_hex(value: str) -> Ed25519PublicKey:
+    try:
+        raw = bytes.fromhex(value.strip())
+    except ValueError as exc:
+        raise ValueError("publisher public key is not valid hex") from exc
+    if len(raw) != 32:
+        raise ValueError(f"an Ed25519 public key is 32 bytes, got {len(raw)}")
+    return Ed25519PublicKey.from_public_bytes(raw)
+
+
 class PublisherKeyring:
     """The consortium's registry of member signing keys.
 

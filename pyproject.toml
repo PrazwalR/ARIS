@@ -79,6 +79,9 @@ select = ["E", "F", "W", "B", "SIM", "UP", "ARG", "RET", "C4", "PIE", "RUF"]
 # environment they set up, and fakes must match the interface they stand in for
 # whether or not they read every argument.
 "tests/*" = ["ARG002", "ARG001"]
+# Report templates: long lines are markdown table rows and prose inside the
+# generated report bodies -- a markdown table row cannot be line-wrapped.
+"scripts/generate_all_reports.py" = ["E501"]
 
 [tool.mypy]
 # Higher than requires-python's 3.10 floor: numpy's bundled stubs use PEP 695

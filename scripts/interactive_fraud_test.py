@@ -5,13 +5,15 @@ Demonstrates the complete real-time lifecycle:
 2. Step 2: Account experiences rapid velocity / mule burst. On-prem graph engine extracts features.
 3. Step 3: Federated fraud model scores the transaction -> high risk score.
 4. Step 4: Bank B publishes a pseudonymous, Ed25519-signed RiskSignal to the Shared Bus.
-5. Step 5: User re-enters the same account details -> Bank A's BankBot immediately BLOCKS in real time!
+5. Step 5: User re-enters the same account details -> Bank A's BankBot BLOCKS
+   in real time!
 6. Step 6: Bank compliance officer inspects the encrypted audit record.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import os
 import sys
 import time
@@ -31,7 +33,9 @@ from aris.schema import CONFIRMED_FRAUD, HIGH_VELOCITY, NEW_BENEFICIARY, RiskSig
 def _ensure_env() -> None:
     if not os.environ.get(SALT_ENV_VAR):
         os.environ[DEV_MODE_ENV_VAR] = "1"
-        os.environ[SALT_ENV_VAR] = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        os.environ[SALT_ENV_VAR] = (
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        )
 
 
 def run_interactive_simulation(
@@ -49,10 +53,8 @@ def run_interactive_simulation(
     def pause(msg: str = "Press Enter to proceed to the next step...") -> None:
         if interactive_pause:
             print(f"\n[PAUSE] {msg}")
-            try:
+            with contextlib.suppress(EOFError, KeyboardInterrupt):
                 input()
-            except (EOFError, KeyboardInterrupt):
-                pass
         else:
             time.sleep(0.5)
 
@@ -80,7 +82,10 @@ def run_interactive_simulation(
     # STEP 1: INITIAL TRANSFER REQUEST (BEFORE FRAUD DETECTION)
     # -------------------------------------------------------------------------
     print("\n>>> STEP 1: USER ATTEMPTS TRANSFER (ACCOUNT NOT YET FLAGGED) <<<")
-    print(f"{user_name} instructs BankBot: 'Transfer Rs {amount_rupees:,.2f} to {receiver_account} at {receiver_ifsc}'.")
+    print(
+        f"{user_name} instructs BankBot: 'Transfer Rs {amount_rupees:,.2f} "
+        f"to {receiver_account} at {receiver_ifsc}'."
+    )
 
     req1 = TransferRequest.from_major_units(
         Decimal(str(amount_rupees)),
@@ -97,7 +102,10 @@ def run_interactive_simulation(
     print(f"  Audit Reference : {decision1.audit_ref}")
     print("  Status          : Transfer approved! Money transfers safely.")
 
-    pause("Observe that the account was allowed because the Shared Bus holds no risk signal for this account.")
+    pause(
+        "Observe that the account was allowed because the Shared Bus holds no "
+        "risk signal for this account."
+    )
 
     # -------------------------------------------------------------------------
     # STEP 2 & 3: FRAUD BURST OCCURS & LOCAL ML MODEL DETECTS SUSPICIOUS ACTIVITY
@@ -138,7 +146,9 @@ def run_interactive_simulation(
     graph_features = extractor.extract_features(current_tx, update_history=True)
 
     print("\n[On-Prem Graph Feature Engine (Extracted locally at Bank B)]")
-    for feat_name, feat_val in zip(OnPremGraphFeatureExtractor.FEATURE_NAMES, graph_features):
+    for feat_name, feat_val in zip(
+        OnPremGraphFeatureExtractor.FEATURE_NAMES, graph_features, strict=True
+    ):
         print(f"  - {feat_name:<26}: {feat_val:.2f}")
 
     # Compute risk score using the federated model or high-velocity heuristic
@@ -186,10 +196,14 @@ def run_interactive_simulation(
     print("\n[Published to Shared Bus (Zero Raw Customer Data Shared)]")
     print(f"  Pseudonymous risk_id : {risk_id}")
     print(f"  Publisher Bank ID    : {signal.source_bank_id}")
-    sig_hex = signed_signal.signature.hex() if isinstance(signed_signal.signature, bytes) else str(signed_signal.signature)
+    sig_hex = (
+        signed_signal.signature.hex()
+        if isinstance(signed_signal.signature, bytes)
+        else str(signed_signal.signature)
+    )
     print(f"  Ed25519 Signature    : {sig_hex[:32]}... (Cryptographically Verified)")
     print(f"  Reason Codes         : {list(signal.reason_codes)}")
-    print(f"  Plain Account on Bus : NONE (Never leaves Bank B!)")
+    print("  Plain Account on Bus : NONE (Never leaves Bank B!)")
 
     pause("Now, what happens if Priya (or any user across any bank) enters the SAME account again?")
 
@@ -218,7 +232,9 @@ def run_interactive_simulation(
     # STEP 6: ENCRYPTED COMPLIANCE AUDIT RECORD INSPECTION
     # -------------------------------------------------------------------------
     print("\n>>> STEP 6: AUDIT TRAIL INSPECTION (FOR COMPLIANCE INVESTIGATORS) <<<")
-    cred = InvestigatorCredential(investigator_id="INV-LEAD-01", reason="Fraud investigation case 4410")
+    cred = InvestigatorCredential(
+        investigator_id="INV-LEAD-01", reason="Fraud investigation case 4410"
+    )
     audit_record = audit_sink.get(decision2.audit_ref, cred)
 
     if audit_record is not None:
@@ -226,7 +242,10 @@ def run_interactive_simulation(
         print(f"  Timestamp UTC   : {audit_record.decided_at.isoformat()}")
         print(f"  Receiver IFSC   : {audit_record.receiver_ifsc}")
         print(f"  Receiver Account: {audit_record.receiver_account}")
-        print(f"  Amount Minor    : {audit_record.amount_minor} paise (Rs {audit_record.amount_minor / 100:.2f})")
+        print(
+            f"  Amount Minor    : {audit_record.amount_minor} paise "
+            f"(Rs {audit_record.amount_minor / 100:.2f})"
+        )
         print(f"  Bus Risk Score  : {audit_record.risk_score}")
         print(f"  Policy Decision : {audit_record.decision.value}")
 
@@ -238,8 +257,12 @@ def run_interactive_simulation(
 def main() -> int:
     parser = argparse.ArgumentParser(description="Interactive ARIS Real-Time Fraud Testing")
     parser.add_argument("--ifsc", default="HDFC0001234", help="Receiver IFSC (default HDFC0001234)")
-    parser.add_argument("--account", default="ACC-88899", help="Receiver Account Number (default ACC-88899)")
-    parser.add_argument("--amount", type=float, default=7500.0, help="Amount in INR (default 7500.0)")
+    parser.add_argument(
+        "--account", default="ACC-88899", help="Receiver Account Number (default ACC-88899)"
+    )
+    parser.add_argument(
+        "--amount", type=float, default=7500.0, help="Amount in INR (default 7500.0)"
+    )
     parser.add_argument("--user", default="Priya", help="User name (default Priya)")
     parser.add_argument("--no-pause", action="store_true", help="Run without pausing between steps")
     args = parser.parse_args()

@@ -9,6 +9,7 @@ Usage:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import time
@@ -22,18 +23,16 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
-from sklearn.metrics import confusion_matrix, precision_recall_curve, roc_curve
 
 from aris.attestation import Publisher, PublisherKeyring
-from aris.bankbot import BankBot, Decision, InMemoryAuditLog, TransferRequest
+from aris.bankbot import BankBot, TransferRequest
 from aris.bus import InMemoryRiskBus
 from aris.fl.config import TrainConfig
-from aris.fl.datasets import load_dataset
 from aris.fl.drift import check_drift
 from aris.fl.explain import FraudExplainer
 from aris.fl.graph_features import generate_multi_bank_transaction_stream
 from aris.fl.metrics import classification_metrics
-from aris.fl.model import new_model, predict_scores, set_weights, train_local
+from aris.fl.model import new_model, predict_scores, train_local
 from aris.fl.privacy import epsilon_for_dpsgd
 from aris.fl.registry import ModelRegistry
 from aris.fl.robust_agg import krum
@@ -42,7 +41,7 @@ from aris.fl.scorer import FraudScorer
 from aris.fl.secure_agg import secure_fedavg
 from aris.hashing import generate_key, risk_id_for_account
 from aris.loadtest import run_load_test
-from aris.schema import PolicyConfig, RiskSignal
+from aris.schema import RiskSignal
 
 REPORTS_DIR = Path(__file__).resolve().parent.parent / "reports"
 ASSETS_DIR = REPORTS_DIR / "assets"
@@ -60,7 +59,9 @@ def _json_serializable(val: Any) -> Any:
     return str(val)
 
 
-def save_report_files(phase_name: str, title: str, data: dict[str, Any], markdown_content: str) -> None:
+def save_report_files(
+    phase_name: str, title: str, data: dict[str, Any], markdown_content: str
+) -> None:
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     json_path = REPORTS_DIR / f"{phase_name}.json"
     md_path = REPORTS_DIR / f"{phase_name}.md"
@@ -71,7 +72,7 @@ def save_report_files(phase_name: str, title: str, data: dict[str, Any], markdow
     with open(md_path, "w", encoding="utf-8") as f:
         f.write(markdown_content)
 
-    print(f"[+] Generated: {md_path.name} & {json_path.name}")
+    print(f"[+] {title}: generated {md_path.name} & {json_path.name}")
 
 
 # ==========================================
@@ -160,10 +161,10 @@ def run_m0_benchmarks() -> dict[str, Any]:
 
 | Primitive | Operation | Throughput | Latency |
 | :--- | :--- | :--- | :--- |
-| **HMAC-SHA256** | `risk_id` Derivation | **{results['hmac_sha256_hashes_per_second']:,} ops/sec** | ~{1000.0 / results['hmac_sha256_hashes_per_second'] * 1000:.2f} µs |
-| **Ed25519** | Signature Generation | **{results['ed25519_signs_per_second']:,} signs/sec** | ~{1000.0 / results['ed25519_signs_per_second']:.3f} ms |
-| **Ed25519** | Keyring Verification | **{results['ed25519_verifications_per_second']:,} verif/sec** | ~{1000.0 / results['ed25519_verifications_per_second']:.3f} ms |
-| **BankBot Engine** | End-to-End Decision | **{results['bankbot_pre_tx_decisions_per_second']:,} decisions/sec** | **{results['bankbot_latency_ms']} ms** |
+| **HMAC-SHA256** | `risk_id` Derivation | **{results["hmac_sha256_hashes_per_second"]:,} ops/sec** | ~{1000.0 / results["hmac_sha256_hashes_per_second"] * 1000:.2f} µs |
+| **Ed25519** | Signature Generation | **{results["ed25519_signs_per_second"]:,} signs/sec** | ~{1000.0 / results["ed25519_signs_per_second"]:.3f} ms |
+| **Ed25519** | Keyring Verification | **{results["ed25519_verifications_per_second"]:,} verif/sec** | ~{1000.0 / results["ed25519_verifications_per_second"]:.3f} ms |
+| **BankBot Engine** | End-to-End Decision | **{results["bankbot_pre_tx_decisions_per_second"]:,} decisions/sec** | **{results["bankbot_latency_ms"]} ms** |
 
 ## 2. Core Security Invariants Met
 - **Pseudonymous Account Hashing:** Length-prefixed `(IFSC, Account)` HMAC-SHA256 bound to daily UTC epochs prevents cross-bank account collision and rainbow table recovery.
@@ -224,10 +225,18 @@ def run_m1_benchmarks() -> dict[str, Any]:
     # Generate Confusion Matrix Chart
     ASSETS_DIR.mkdir(parents=True, exist_ok=True)
     fig, ax = plt.subplots(figsize=(6, 5))
-    cm = np.array([
-        [int(global_m.get("true_negatives_at_0_5", 5500)), int(global_m.get("false_positives_at_0_5", 50))],
-        [int(global_m.get("false_negatives_at_0_5", 10)), int(global_m.get("true_positives_at_0_5", 440))],
-    ])
+    cm = np.array(
+        [
+            [
+                int(global_m.get("true_negatives_at_0_5", 5500)),
+                int(global_m.get("false_positives_at_0_5", 50)),
+            ],
+            [
+                int(global_m.get("false_negatives_at_0_5", 10)),
+                int(global_m.get("true_positives_at_0_5", 440)),
+            ],
+        ]
+    )
     im = ax.imshow(cm, cmap="Blues", interpolation="nearest")
     ax.set_title("Global FedAvg Model - Confusion Matrix @ 0.5 Threshold")
     ax.set_xticks([0, 1])
@@ -236,7 +245,16 @@ def run_m1_benchmarks() -> dict[str, Any]:
     ax.set_yticklabels(["Actual Legit", "Actual Fraud"])
     for i in range(2):
         for j in range(2):
-            ax.text(j, i, f"{cm[i, j]:,}", ha="center", va="center", color="red" if i == j == 1 else "black", fontsize=12, fontweight="bold")
+            ax.text(
+                j,
+                i,
+                f"{cm[i, j]:,}",
+                ha="center",
+                va="center",
+                color="red" if i == j == 1 else "black",
+                fontsize=12,
+                fontweight="bold",
+            )
     plt.colorbar(im)
     plt.tight_layout()
     chart_path = ASSETS_DIR / "m1_ulb_confusion_matrix.png"
@@ -252,21 +270,21 @@ def run_m1_benchmarks() -> dict[str, Any]:
 
 | Entity | Role / Partition | Samples (Fraud) | ROC-AUC | PR-AUC | Accuracy @ 0.5 |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **BANK-A** | Retail Accounts (Low amounts) | {results['bank_breakdown'][0]['samples']} ({results['bank_breakdown'][0]['positives']}) | {results['bank_breakdown'][0]['auc']:.4f} | {results['bank_breakdown'][0]['pr_auc']:.4f} | {results['bank_breakdown'][0]['accuracy']:.4f} |
-| **BANK-B** | Corporate Accounts (High amounts) | {results['bank_breakdown'][1]['samples']} ({results['bank_breakdown'][1]['positives']}) | {results['bank_breakdown'][1]['auc']:.4f} | {results['bank_breakdown'][1]['pr_auc']:.4f} | {results['bank_breakdown'][1]['accuracy']:.4f} |
-| **BANK-C** | Regional Branch (Imbalanced) | {results['bank_breakdown'][2]['samples']} ({results['bank_breakdown'][2]['positives']}) | {results['bank_breakdown'][2]['auc']:.4f} | {results['bank_breakdown'][2]['pr_auc']:.4f} | {results['bank_breakdown'][2]['accuracy']:.4f} |
-| **BANK-D** | High Velocity Transfers | {results['bank_breakdown'][3]['samples']} ({results['bank_breakdown'][3]['positives']}) | {results['bank_breakdown'][3]['auc']:.4f} | {results['bank_breakdown'][3]['pr_auc']:.4f} | {results['bank_breakdown'][3]['accuracy']:.4f} |
-| **BANK-E** | General Consumer Transfers | {results['bank_breakdown'][4]['samples']} ({results['bank_breakdown'][4]['positives']}) | {results['bank_breakdown'][4]['auc']:.4f} | {results['bank_breakdown'][4]['pr_auc']:.4f} | {results['bank_breakdown'][4]['accuracy']:.4f} |
-| **Mean Local** | Isolated Banks Average | -- | **{results['mean_local_auc']:.4f}** | **{results['mean_local_pr_auc']:.4f}** | **0.9820** |
-| **Global FedAvg** | Collaborative Consensus | **All Banks** | **{results['global_fedavg_auc']:.4f}** | **{results['global_fedavg_pr_auc']:.4f}** | **{results['global_accuracy_at_0_5']:.4f}** |
+| **BANK-A** | Retail Accounts (Low amounts) | {results["bank_breakdown"][0]["samples"]} ({results["bank_breakdown"][0]["positives"]}) | {results["bank_breakdown"][0]["auc"]:.4f} | {results["bank_breakdown"][0]["pr_auc"]:.4f} | {results["bank_breakdown"][0]["accuracy"]:.4f} |
+| **BANK-B** | Corporate Accounts (High amounts) | {results["bank_breakdown"][1]["samples"]} ({results["bank_breakdown"][1]["positives"]}) | {results["bank_breakdown"][1]["auc"]:.4f} | {results["bank_breakdown"][1]["pr_auc"]:.4f} | {results["bank_breakdown"][1]["accuracy"]:.4f} |
+| **BANK-C** | Regional Branch (Imbalanced) | {results["bank_breakdown"][2]["samples"]} ({results["bank_breakdown"][2]["positives"]}) | {results["bank_breakdown"][2]["auc"]:.4f} | {results["bank_breakdown"][2]["pr_auc"]:.4f} | {results["bank_breakdown"][2]["accuracy"]:.4f} |
+| **BANK-D** | High Velocity Transfers | {results["bank_breakdown"][3]["samples"]} ({results["bank_breakdown"][3]["positives"]}) | {results["bank_breakdown"][3]["auc"]:.4f} | {results["bank_breakdown"][3]["pr_auc"]:.4f} | {results["bank_breakdown"][3]["accuracy"]:.4f} |
+| **BANK-E** | General Consumer Transfers | {results["bank_breakdown"][4]["samples"]} ({results["bank_breakdown"][4]["positives"]}) | {results["bank_breakdown"][4]["auc"]:.4f} | {results["bank_breakdown"][4]["pr_auc"]:.4f} | {results["bank_breakdown"][4]["accuracy"]:.4f} |
+| **Mean Local** | Isolated Banks Average | -- | **{results["mean_local_auc"]:.4f}** | **{results["mean_local_pr_auc"]:.4f}** | **0.9820** |
+| **Global FedAvg** | Collaborative Consensus | **All Banks** | **{results["global_fedavg_auc"]:.4f}** | **{results["global_fedavg_pr_auc"]:.4f}** | **{results["global_accuracy_at_0_5"]:.4f}** |
 
 **Global Beats Mean Local AUC:** `True` (Solid federated collaborative advantage proven on unseen holdout).
 
 ## 2. Confusion Matrix & Classification Metrics
 ![Confusion Matrix](assets/m1_ulb_confusion_matrix.png)
 
-- **Precision @ 0.5 Threshold:** `{results['global_precision_at_0_5']:.4f}`
-- **Recall @ 0.5 Threshold:** `{results['global_recall_at_0_5']:.4f}`
+- **Precision @ 0.5 Threshold:** `{results["global_precision_at_0_5"]:.4f}`
+- **Recall @ 0.5 Threshold:** `{results["global_recall_at_0_5"]:.4f}`
 - **Zero Raw Data Shared:** Banks transmitted weight vectors only; no customer records departed local boundaries.
 """
     save_report_files("M1_federated_learning", "Phase M1 Report", results, md)
@@ -287,14 +305,15 @@ def run_m2_benchmarks() -> dict[str, Any]:
         eps = epsilon_for_dpsgd(noise_multiplier=nm, num_steps=steps, delta=delta)
         # Approximate AUC degradation modeled from synthetic DP sweep
         sim_auc = round(0.655 - (0.09 / (1.0 + np.exp((nm - 10.0) / 4.0))), 4)
-        sweep_records.append({
-            "noise_multiplier": nm,
-            "epsilon_upper_bound": round(eps, 2),
-            "global_auc": sim_auc,
-        })
+        sweep_records.append(
+            {
+                "noise_multiplier": nm,
+                "epsilon_upper_bound": round(eps, 2),
+                "global_auc": sim_auc,
+            }
+        )
 
     # Test secure aggregation cancellation
-    dummy_w = [np.array([1.5, 2.5], dtype=np.float32)]
     updates = [([np.array([1.5, 2.5], dtype=np.float32)], 100) for _ in range(3)]
     sec_w = secure_fedavg(updates, seed=42)
     diff = float(np.max(np.abs(sec_w[0] - np.array([1.5, 2.5], dtype=np.float32))))
@@ -317,13 +336,13 @@ def run_m2_benchmarks() -> dict[str, Any]:
 
 | Noise Multiplier ($\\sigma$) | $\\epsilon$ (Upper Bound, $\\delta=10^{{-5}}$) | Global AUC | Privacy Protection Level |
 | :---: | :---: | :---: | :--- |
-| **0.5** | {sweep_records[0]['epsilon_upper_bound']} | {sweep_records[0]['global_auc']} | Minimal (Utility prioritized) |
-| **1.0** | {sweep_records[1]['epsilon_upper_bound']} | {sweep_records[1]['global_auc']} | Light privacy |
-| **2.0** | {sweep_records[2]['epsilon_upper_bound']} | {sweep_records[2]['global_auc']} | Moderate |
-| **4.0** | {sweep_records[3]['epsilon_upper_bound']} | {sweep_records[3]['global_auc']} | Standard enterprise privacy |
-| **8.0** | {sweep_records[4]['epsilon_upper_bound']} | {sweep_records[4]['global_auc']} | Strong mathematical defense |
-| **15.0** | {sweep_records[5]['epsilon_upper_bound']} | {sweep_records[5]['global_auc']} | High defense against reconstruction |
-| **30.0** | {sweep_records[6]['epsilon_upper_bound']} | {sweep_records[6]['global_auc']} | Near-cryptographic privacy |
+| **0.5** | {sweep_records[0]["epsilon_upper_bound"]} | {sweep_records[0]["global_auc"]} | Minimal (Utility prioritized) |
+| **1.0** | {sweep_records[1]["epsilon_upper_bound"]} | {sweep_records[1]["global_auc"]} | Light privacy |
+| **2.0** | {sweep_records[2]["epsilon_upper_bound"]} | {sweep_records[2]["global_auc"]} | Moderate |
+| **4.0** | {sweep_records[3]["epsilon_upper_bound"]} | {sweep_records[3]["global_auc"]} | Standard enterprise privacy |
+| **8.0** | {sweep_records[4]["epsilon_upper_bound"]} | {sweep_records[4]["global_auc"]} | Strong mathematical defense |
+| **15.0** | {sweep_records[5]["epsilon_upper_bound"]} | {sweep_records[5]["global_auc"]} | High defense against reconstruction |
+| **30.0** | {sweep_records[6]["epsilon_upper_bound"]} | {sweep_records[6]["global_auc"]} | Near-cryptographic privacy |
 
 ## 2. Secure Aggregation
 - **Pairwise Masking Verification:** Pairwise perturbation masks cancel out with absolute error `{diff:.2e}` (exact floating-point precision).
@@ -391,7 +410,7 @@ def run_m3_m4_benchmarks() -> dict[str, Any]:
         "lookup_throughput_ops_sec": round(1000.0 / (np.mean(latencies) + 1e-6), 2),
     }
 
-    m3_md = f"""# Phase M3: Shared Risk-Signal Bus (Kafka) Report
+    m3_md = """# Phase M3: Shared Risk-Signal Bus (Kafka) Report
 
 **Status:** Completed & Verified
 **Message Bus:** Apache Kafka (KRaft) + Karapace Schema Registry / Local Materialized View
@@ -425,14 +444,14 @@ def run_m3_m4_benchmarks() -> dict[str, Any]:
 
 | Percentile | Latency | SLA Target | Status |
 | :--- | :--- | :--- | :--- |
-| **p50 (Median)** | **{results['latency_p50_ms']} ms** | < 2.0 ms | Met |
-| **p95** | **{results['latency_p95_ms']} ms** | < 5.0 ms | Met |
-| **p99** | **{results['latency_p99_ms']} ms** | < 10.0 ms | Met |
+| **p50 (Median)** | **{results["latency_p50_ms"]} ms** | < 2.0 ms | Met |
+| **p95** | **{results["latency_p95_ms"]} ms** | < 5.0 ms | Met |
+| **p99** | **{results["latency_p99_ms"]} ms** | < 10.0 ms | Met |
 
 ## 2. Policy Decisions Breakdown
-- **ALLOW Decisions:** {decisions_count['ALLOW']} (Transfers to clean, unflagged accounts).
-- **STEP-UP Decisions:** {decisions_count['STEP_UP']} (Medium risk or large transaction amounts > ₹100,000).
-- **BLOCK Decisions:** {decisions_count['BLOCK']} (High-risk mule accounts flagged by peer banks).
+- **ALLOW Decisions:** {decisions_count["ALLOW"]} (Transfers to clean, unflagged accounts).
+- **STEP-UP Decisions:** {decisions_count["STEP_UP"]} (Medium risk or large transaction amounts > ₹100,000).
+- **BLOCK Decisions:** {decisions_count["BLOCK"]} (High-risk mule accounts flagged by peer banks).
 
 ## 3. Security Highlights
 - **No Score Probing Oracle:** Customer response returns opaque audit reference; fraudsters cannot probe the API to discover mule burnout scores.
@@ -471,22 +490,20 @@ def run_m5_benchmarks() -> dict[str, Any]:
     drift_res = check_drift(ref, curr, feature_names=[f"f{i}" for i in range(n_features)])
 
     # 3. Model Registry & Rollback Check
-    from aris.fl.registry import ModelRegistry, should_rollback
+    from aris.fl.registry import should_rollback
 
     reg_dir = Path("data/processed/model_registry")
     reg_dir.mkdir(parents=True, exist_ok=True)
     reg = ModelRegistry(reg_dir)
     dummy_ckpt = reg_dir / "m1_global_v1.0.npz"
     dummy_ckpt.write_bytes(b"dummy")
-    try:
+    with contextlib.suppress(ValueError):  # already registered on a re-run
         reg.register(
             model_version="v1.0",
             dataset="synthetic",
             checkpoint_path=dummy_ckpt,
             metrics={"auc": 0.98},
         )
-    except ValueError:
-        pass
     rollback_eval = should_rollback(
         candidate_metrics={"auc": 0.85},
         active_metrics={"auc": 0.98},
@@ -507,12 +524,12 @@ def run_m5_benchmarks() -> dict[str, Any]:
 
 ## 1. Model Explainability & Attribution
 - **Target Fraud Sample:** Driven by synthetic spikes on `f3` and `f0`.
-- **SHAP Dominant Feature Attributed:** `{results['shap_dominant_attribution']}` (Mapped to reason codes: `high_velocity`, `new_beneficiary`).
+- **SHAP Dominant Feature Attributed:** `{results["shap_dominant_attribution"]}` (Mapped to reason codes: `high_velocity`, `new_beneficiary`).
 - **Analyst Defensibility:** Every blocked transaction produces a deterministic attribution trace to satisfy regulatory inquiries.
 
 ## 2. Production Drift Monitoring & Rollback
-- **Data Drift Detection:** Kolmogorov-Smirnov test correctly isolated drifted feature (`{results['drift_detected_features']}`) while clearing untouched features.
-- **Automated Rollback Safeguard:** `should_rollback = {results['model_registry_rollback_triggered']}` when an incoming candidate model regressed AUC from 0.98 to 0.85.
+- **Data Drift Detection:** Kolmogorov-Smirnov test correctly isolated drifted feature (`{results["drift_detected_features"]}`) while clearing untouched features.
+- **Automated Rollback Safeguard:** `should_rollback = {results["model_registry_rollback_triggered"]}` when an incoming candidate model regressed AUC from 0.98 to 0.85.
 """
     save_report_files("M5_explainability_mlops", "Phase M5 Report", results, md)
     return results
@@ -525,14 +542,19 @@ def run_m6_benchmarks() -> dict[str, Any]:
     print("\n--- Running M6 Benchmarks (Byzantine Robustness, Graph Velocity Lift & Load Test) ---")
     # 1. Byzantine Attack Simulation
     honest_updates = [([np.ones((4, 4), dtype=np.float32) * 0.1], 100) for _ in range(4)]
-    byzantine_update = ([np.ones((4, 4), dtype=np.float32) * -1000.0], 100000)  # poisoned + lying sample count
-    all_updates = honest_updates + [byzantine_update]
+    byzantine_update = (
+        [np.ones((4, 4), dtype=np.float32) * -1000.0],
+        100000,
+    )  # poisoned + lying sample count
+    all_updates = [*honest_updates, byzantine_update]
 
     krum_res = krum(all_updates, num_byzantine=1)
     krum_val = float(krum_res[0][0, 0])
 
     # 2. Graph & Velocity Feature Lift
-    records, x, y, feature_names = generate_multi_bank_transaction_stream(num_banks=5, num_transactions=2000, seed=42)
+    _records, x, y, _feature_names = generate_multi_bank_transaction_stream(
+        num_banks=5, num_transactions=2000, seed=42
+    )
     split = int(len(y) * 0.8)
     x_tr, y_tr, x_te, y_te = x[:split], y[:split], x[split:], y[split:]
 
@@ -572,17 +594,17 @@ def run_m6_benchmarks() -> dict[str, Any]:
 | Aggregation Strategy | Behavior Under Hostile Member | Resulting Parameter | Defense Status |
 | :--- | :--- | :--- | :--- |
 | **Standard FedAvg** | Vulnerable to malicious outlier & false sample counts | Degrades to near-random | Failed |
-| **Krum (M6+ Deliverable)** | Selects update closest to peer cluster | **{results['krum_aggregated_weight']}** (Matches honest 0.10) | **Resisted Attack** |
+| **Krum (M6+ Deliverable)** | Selects update closest to peer cluster | **{results["krum_aggregated_weight"]}** (Matches honest 0.10) | **Resisted Attack** |
 
 ## 2. On-Prem Graph & Receiver Velocity Lift
 - **Dataset:** Coordinated Multi-Bank Mule Ring Stream.
 - **Features Extracted Locally:** `fan_in_1h`, `fan_in_24h`, `velocity_amount_ratio_24h`, `tx_frequency_1h`.
-- **Model Detection Performance:** **ROC-AUC: {results['graph_stream_auc']:.4f}** | **PR-AUC: {results['graph_stream_pr_auc']:.4f}**.
+- **Model Detection Performance:** **ROC-AUC: {results["graph_stream_auc"]:.4f}** | **PR-AUC: {results["graph_stream_pr_auc"]:.4f}**.
 - **Privacy Outcome:** Mule networks successfully caught without centralizing graph edges or customer identities.
 
 ## 3. High-Concurrency Stress Test
-- **Throughput:** **{results['load_test_throughput_signals_sec']:,} signals/sec** (Concurrent threads: 10).
-- **Update Integrity:** **{results['load_test_lost_updates']} lost updates** under intense contention.
+- **Throughput:** **{results["load_test_throughput_signals_sec"]:,} signals/sec** (Concurrent threads: 10).
+- **Update Integrity:** **{results["load_test_lost_updates"]} lost updates** under intense contention.
 """
     save_report_files("M6_scale_robustness_graph", "Phase M6 Report", results, md)
     return results
@@ -597,7 +619,6 @@ def generate_master_dashboard(all_metrics: dict[str, Any]) -> None:
     m1 = all_metrics["m1"]
     m2 = all_metrics["m2"]
     m4 = all_metrics["m4"]
-    m5 = all_metrics["m5"]
     m6 = all_metrics["m6"]
 
     md = f"""# ARIS (AI-Agent Risk Integration System)
@@ -612,13 +633,13 @@ def generate_master_dashboard(all_metrics: dict[str, Any]) -> None:
 
 | Phase | Description | Key Performance Indicator | Security & Novelty | Status |
 | :--- | :--- | :--- | :--- | :---: |
-| **M0** | Cryptographic Foundation | HMAC: **{m0['hmac_sha256_hashes_per_second']:,} h/s** | Keyed `risk_id`, Ed25519 signatures | **Done** |
-| **M1** | Federated Learning | Global FedAvg AUC: **{m1['global_fedavg_auc']:.4f}** | Heterogeneous banks; 0 raw rows shared | **Done** |
-| **M2** | Privacy on Training | $\\epsilon={m2['noise_sweep'][3]['epsilon_upper_bound']}$ @ $\\sigma=4.0$ | DP-SGD + Exact Secure Aggregation | **Done** |
+| **M0** | Cryptographic Foundation | HMAC: **{m0["hmac_sha256_hashes_per_second"]:,} h/s** | Keyed `risk_id`, Ed25519 signatures | **Done** |
+| **M1** | Federated Learning | Global FedAvg AUC: **{m1["global_fedavg_auc"]:.4f}** | Heterogeneous banks; 0 raw rows shared | **Done** |
+| **M2** | Privacy on Training | $\\epsilon={m2["noise_sweep"][3]["epsilon_upper_bound"]}$ @ $\\sigma=4.0$ | DP-SGD + Exact Secure Aggregation | **Done** |
 | **M3** | Kafka Shared Risk Bus | Compacted Topic: **256 Prefix Buckets** | mTLS auth, Schema Registry, Re-verification | **Done** |
-| **M4** | BankBot Pre-Tx API | API Latency p50: **{m4['latency_p50_ms']} ms** | Encrypted audit log; No-score-oracle | **Done** |
+| **M4** | BankBot Pre-Tx API | API Latency p50: **{m4["latency_p50_ms"]} ms** | Encrypted audit log; No-score-oracle | **Done** |
 | **M5** | Explainability & MLOps | Permutation SHAP + K-S Drift | Automated rollback triggers on regression | **Done** |
-| **M6** | Scale, Byzantine & Graph | Load: **{m6['load_test_throughput_signals_sec']:,} sig/s** | Krum Byzantine defense; On-prem graph velocity | **Done** |
+| **M6** | Scale, Byzantine & Graph | Load: **{m6["load_test_throughput_signals_sec"]:,} sig/s** | Krum Byzantine defense; On-prem graph velocity | **Done** |
 
 ---
 

@@ -16,7 +16,7 @@ from collections import OrderedDict, deque
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
-from typing import Any, Final
+from typing import Final
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -30,7 +30,8 @@ from aris.audit_security import (
     encrypt_record,
 )
 from aris.bus import LookupResult, RiskBus
-from aris.hashing import current_epoch, normalize_ifsc, risk_id_for_account
+from aris.hashing import normalize_account, normalize_ifsc
+from aris.risk_id import HmacRiskIdDeriver, RiskIdDeriver
 from aris.schema import Decision, LookupStatus, PolicyConfig, apply_policy
 
 logger = logging.getLogger(__name__)
@@ -38,6 +39,9 @@ logger = logging.getLogger(__name__)
 MINOR_UNITS_PER_MAJOR: Final = 100
 DEFAULT_AUDIT_CAPACITY: Final = 10_000
 DEFAULT_REPLAY_CACHE: Final = 10_000
+# Recorded in place of a risk_id when none could be derived at all (an OPRF
+# authority that is down or rate limiting this bank).
+RISK_ID_UNAVAILABLE: Final = ""
 
 _BLOCK_MESSAGE: Final = (
     "This transfer looks risky. The receiver account has been flagged for "
@@ -320,14 +324,13 @@ class BankBot:
         audit: AuditSink | None = None,
         replay_cache_size: int = DEFAULT_REPLAY_CACHE,
         now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
-        oprf_authority: Any | None = None,
-        bank_id: str = "BANK-A",
+        risk_ids: RiskIdDeriver | None = None,
     ) -> None:
         self.bus = bus
         self.policy = policy or PolicyConfig()
         self.audit = audit if audit is not None else InMemoryAuditLog()
-        self.oprf_authority = oprf_authority
-        self.bank_id = bank_id
+        # Must match whatever scheme publishers sign under -- see aris.risk_id.
+        self.risk_ids: RiskIdDeriver = risk_ids if risk_ids is not None else HmacRiskIdDeriver()
         # transfer_id -> the decision already taken for it.
         self._decided: OrderedDict[str, BankBotDecision] = OrderedDict()
         self._replay_cache_size = replay_cache_size
@@ -343,45 +346,51 @@ class BankBot:
     def _lookup_receiver(
         self, ifsc: str, account: str, transfer_id: str
     ) -> tuple[str, LookupResult | None]:
-        """Look up ``(ifsc, account)`` under the current key epoch or OPRF authority."""
-        if self.oprf_authority is not None:
-            from aris.oprf import risk_id_for_account_oprf
+        """Look up ``(ifsc, account)`` under every candidate id the deriver
+        offers (for HMAC/HSM: current epoch, then the previous one).
 
-            try:
-                risk_id = risk_id_for_account_oprf(ifsc, account, self.oprf_authority, self.bank_id)
-                res = self.bus.lookup(risk_id)
-                return risk_id, res
-            except Exception:
-                logger.exception("OPRF lookup failed for transfer %s", transfer_id)
-                return "", None
+        Without the previous-epoch fallback, a signal published just before a
+        UTC-day boundary and looked up just after it would derive a different
+        risk_id purely from crossing that boundary and would silently read as
+        NOT_FOUND, which resolves the same way an unflagged account does. See
+        docs/SECURITY.md SS3.2. Returns the risk_id the caller should report
+        (the preferred candidate, even when an older one is what matched, for
+        audit continuity) and the lookup result, or ``None`` in place of the
+        result to mean the lookup could not be completed.
+        """
+        # Validate the input before the fail-closed block below: a malformed
+        # account number is the caller's error and must surface as one, not
+        # be swallowed and quietly decided as if the bus were down.
+        ifsc, account = normalize_ifsc(ifsc), normalize_account(account)
+        try:
+            candidates = self.risk_ids.candidates(ifsc, account, self._now())
+        except Exception:
+            # An OPRF authority that is rate limiting, unreachable, or
+            # returning unverifiable answers means this bank cannot learn
+            # whether the receiver is flagged -- the same position as a bus
+            # outage, and handled the same fail-closed way, never as allow.
+            logger.exception("risk_id derivation failed for transfer %s", transfer_id)
+            return RISK_ID_UNAVAILABLE, None
 
-        epoch_now = current_epoch(self._now())
-        primary_risk_id = risk_id_for_account(ifsc, account, epoch=epoch_now)
         primary_result: LookupResult | None = None
-        for i, epoch in enumerate((epoch_now, epoch_now - 1)):
-            candidate_risk_id = (
-                primary_risk_id if i == 0 else risk_id_for_account(ifsc, account, epoch=epoch)
-            )
+        for i, candidate_risk_id in enumerate(candidates):
             try:
                 result = self.bus.lookup(candidate_risk_id)
             except Exception:
                 # An implementation is contracted to report UNAVAILABLE rather
                 # than raise, but a transport fault must never fail open, so
-                # an escaped exception is treated as an outage too. Reported
-                # under the current epoch's risk_id regardless of which
-                # attempt raised, for audit continuity.
+                # an escaped exception is treated as an outage too.
                 logger.exception(
-                    "risk bus lookup failed for transfer %s risk_id=%s (epoch=%d)",
+                    "risk bus lookup failed for transfer %s risk_id=%s",
                     transfer_id,
                     candidate_risk_id,
-                    epoch,
                 )
-                return primary_risk_id, None
+                return candidates[0], None
             if i == 0:
                 primary_result = result
             if result.status is LookupStatus.FOUND:
                 return candidate_risk_id, result
-        return primary_risk_id, primary_result
+        return candidates[0], primary_result
 
     def pre_transaction(self, req: TransferRequest) -> BankBotDecision:
         """Decide a transfer before any money moves.
