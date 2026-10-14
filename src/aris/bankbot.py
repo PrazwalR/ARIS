@@ -320,10 +320,14 @@ class BankBot:
         audit: AuditSink | None = None,
         replay_cache_size: int = DEFAULT_REPLAY_CACHE,
         now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+        oprf_authority: Any | None = None,
+        bank_id: str = "BANK-A",
     ) -> None:
         self.bus = bus
         self.policy = policy or PolicyConfig()
         self.audit = audit if audit is not None else InMemoryAuditLog()
+        self.oprf_authority = oprf_authority
+        self.bank_id = bank_id
         # transfer_id -> the decision already taken for it.
         self._decided: OrderedDict[str, BankBotDecision] = OrderedDict()
         self._replay_cache_size = replay_cache_size
@@ -339,18 +343,18 @@ class BankBot:
     def _lookup_receiver(
         self, ifsc: str, account: str, transfer_id: str
     ) -> tuple[str, LookupResult | None]:
-        """Look up ``(ifsc, account)`` under the current key epoch, falling
-        back to the previous one if the current epoch has nothing live.
+        """Look up ``(ifsc, account)`` under the current key epoch or OPRF authority."""
+        if self.oprf_authority is not None:
+            from aris.oprf import risk_id_for_account_oprf
 
-        Without this, a signal published just before a UTC-day boundary and
-        looked up just after it would derive a different risk_id purely from
-        crossing that boundary and would silently read as NOT_FOUND, which
-        resolves the same way an unflagged account does. See docs/SECURITY.md
-        SS3.2. Returns the risk_id the caller should report (for audit
-        continuity, always the *current* epoch's, even when the previous
-        epoch's signal is what was actually found) and the lookup result, or
-        ``None`` in place of the result to mean the bus itself is unavailable.
-        """
+            try:
+                risk_id = risk_id_for_account_oprf(ifsc, account, self.oprf_authority, self.bank_id)
+                res = self.bus.lookup(risk_id)
+                return risk_id, res
+            except Exception:
+                logger.exception("OPRF lookup failed for transfer %s", transfer_id)
+                return "", None
+
         epoch_now = current_epoch(self._now())
         primary_risk_id = risk_id_for_account(ifsc, account, epoch=epoch_now)
         primary_result: LookupResult | None = None
