@@ -38,13 +38,24 @@ def load_dataset(
     key = name.lower().strip()
     if key in {"synthetic", "synth"}:
         return make_synthetic(n_banks=num_banks, seed=seed, max_rows=max_rows)
+    if key in {"graph-stream", "graph", "multi-bank", "mule-ring"}:
+        from aris.fl.graph_features import generate_multi_bank_transaction_stream
+
+        num_tx = max_rows if max_rows is not None else 6000
+        records, x, y, feature_names = generate_multi_bank_transaction_stream(
+            num_banks=num_banks,
+            num_transactions=num_tx,
+            seed=seed,
+        )
+        time = np.array([r.timestamp for r in records], dtype=np.float32)
+        return TabularFraud("graph-stream", x, y, time, feature_names)
     if key in {"ulb", "creditcard", "ieee-ulb"}:
         return load_ulb(max_rows=max_rows)
     if key in {"paysim"}:
         return load_paysim(max_rows=max_rows)
     if key in {"ieee-cis", "ieee", "ieee_cis"}:
         return load_ieee_cis(max_rows=max_rows)
-    raise ValueError(f"Unknown dataset {name!r}. Use synthetic | ulb | paysim | ieee-cis")
+    raise ValueError(f"Unknown dataset {name!r}. Use synthetic | graph-stream | ulb | paysim | ieee-cis")
 
 
 def ensure_ulb_csv(dest: Path | None = None) -> Path:

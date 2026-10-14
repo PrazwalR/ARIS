@@ -25,6 +25,7 @@ from aris.fl.model import new_model, predict_scores, set_weights, train_local
 from aris.fl.partition import (
     dirichlet_shards,
     equal_contiguous_shards,
+    heterogeneous_bank_shards,
     holdout_split,
     named_banks,
     pooled_holdout_from_shards,
@@ -68,6 +69,8 @@ def run_experiment(
         if part == "temporal" and data.time is not None:
             t_tr = np.arange(len(y_tr), dtype=np.float32)
             shards = temporal_shards(x_tr, y_tr, t_tr, cfg.num_banks)
+        elif part == "heterogeneous":
+            shards = heterogeneous_bank_shards(x_tr, y_tr, cfg.num_banks, cfg.seed)
         else:
             shards = dirichlet_shards(x_tr, y_tr, cfg.num_banks, cfg.dirichlet_alpha, cfg.seed)
 
@@ -340,12 +343,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--dataset",
         default="synthetic",
-        choices=("synthetic", "ulb", "paysim", "ieee-cis"),
+        choices=("synthetic", "graph-stream", "ulb", "paysim", "ieee-cis"),
     )
     parser.add_argument("--banks", type=int, default=5)
     parser.add_argument("--rounds", type=int, default=8)
     parser.add_argument("--epochs", type=int, default=4)
-    parser.add_argument("--partition", default="auto", choices=("auto", "temporal", "dirichlet"))
+    parser.add_argument("--partition", default="auto", choices=("auto", "temporal", "dirichlet", "heterogeneous"))
     parser.add_argument(
         "--max-rows",
         type=int,

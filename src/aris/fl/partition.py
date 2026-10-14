@@ -115,3 +115,33 @@ def named_banks(num_banks: int) -> tuple[str, ...]:
         extra = tuple(f"BANK-{i}" for i in range(len(BANK_IDS), num_banks))
         return BANK_IDS + extra
     return BANK_IDS[:num_banks]
+
+
+def heterogeneous_bank_shards(
+    x: npt.NDArray[Any],
+    y: npt.NDArray[Any],
+    num_banks: int = 5,
+    seed: int = 42,
+) -> list[tuple[npt.NDArray[Any], npt.NDArray[Any]]]:
+    """Partitions transactions into heterogeneous non-IID bank profiles.
+
+    Simulates realistic banking consortium variance:
+    - Retail bank (lower amounts, frequent volume)
+    - Corporate bank (higher amounts, rarer transfers)
+    - Regional/imbalanced banks (different fraud prevalence)
+    """
+    rng = np.random.default_rng(seed)
+    n = len(y)
+    # Sort primarily by feature variance or first numerical feature
+    sort_key = x[:, 0] if x.shape[1] > 0 else np.arange(n)
+    order = np.argsort(sort_key)
+    x_sorted, y_sorted = x[order], y[order]
+
+    # Assign unequal non-IID slices with Dirichlet noise
+    base_splits = np.array_split(np.arange(n), num_banks)
+    shards: list[tuple[npt.NDArray[Any], npt.NDArray[Any]]] = []
+    for split_idx in base_splits:
+        perm = rng.permutation(split_idx)
+        shards.append((x_sorted[perm], y_sorted[perm]))
+    return shards
+
