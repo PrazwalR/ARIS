@@ -189,7 +189,7 @@ test.describe("measured results", () => {
   test("proof strip reports the measured test run", async ({ page }) => {
     await page.goto("/#proof");
     await expect(page.getByTestId("badge-tests")).toContainText(
-      `${metrics.tests.passed.toLocaleString("en-IN")} tests passed`,
+      `${metrics.tests.passed.toLocaleString("en-US")} tests passed`,
     );
     await expect(page.getByTestId("provenance")).toContainText(metrics.commit);
   });

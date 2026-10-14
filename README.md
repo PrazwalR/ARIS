@@ -82,26 +82,28 @@ and PR-AUC are the metrics that actually distinguish these models.
 `global_beats_mean_local_auc = true` (exit code 0). All numbers above are
 regenerated live by `python -m aris.fl.run --dataset synthetic`, not fixed.
 
-**ULB credit-card fraud** (auto-downloaded, capped at 30k rows keeping all fraud, 5 banks, temporal shards, 5 rounds × 2 epochs). Holdout: 6000 rows, 34 fraud (~0.6%) — far more imbalanced than synthetic, which is why accuracy alone would be an especially bad headline metric here (predicting "not fraud" for every row scores >99%):
+**ULB credit-card fraud** (the full published dataset, 284,807 transactions over two days, 492 fraud; 5 banks, temporal shards, 5 rounds × 2 epochs). Holdout: the latest 20% by time, 56,962 rows, 75 fraud (0.13%) — far more imbalanced than synthetic, which is why accuracy alone would be an especially bad headline metric here (predicting "not fraud" for every row scores 99.87%):
 
-| Model | AUC | PR-AUC | Accuracy @ 0.5 |
-| --- | --- | --- | --- |
-| BANK-A (local only) | 0.997 | 0.879 | 0.981 |
-| BANK-B (local only) | 0.960 | 0.866 | 0.990 |
-| BANK-C (local only) | 0.984 | 0.904 | 0.988 |
-| BANK-D (local only) | 0.967 | 0.846 | 0.978 |
-| BANK-E (local only) | 0.984 | 0.882 | 0.973 |
-| Mean of 5 **local** models | 0.978 | 0.875 | 0.982 |
-| **Global FedAvg** | **0.990** | **0.926** | **0.983** |
+| Model | AUC | PR-AUC | Precision @ 0.5 | Recall @ 0.5 |
+| --- | --- | --- | --- | --- |
+| BANK-A (local only) | 0.972 | 0.708 | 0.072 | 0.867 |
+| BANK-B (local only) | 0.966 | 0.675 | 0.041 | 0.840 |
+| BANK-C (local only) | 0.963 | 0.774 | 0.008 | 0.933 |
+| BANK-D (local only) | 0.975 | 0.657 | 0.100 | 0.853 |
+| BANK-E (local only) | 0.966 | 0.709 | 0.018 | 0.920 |
+| Mean of 5 **local** models | 0.969 | 0.704 | 0.048 | 0.883 |
+| **Global FedAvg** | **0.990** | **0.793** | **0.041** | **0.907** |
 
-`global_beats_mean_local_auc = true`. Re-measured for this table (previous
-version showed 0.969 / 0.985 / 0.877 with the local-mean PR-AUC blank —
-that blank was a documentation gap, not a missing capability: `run.py` has
-always computed `mean_local.pr_auc`, it just wasn't copied into this table
-when it was originally written by hand. The small drift from the old
-headline numbers is normal run-to-run variance, not a regression.
-Reproduce with `python -m aris.fl.run --dataset ulb --max-rows 30000
---rounds 5 --epochs 2` (first run downloads ~47 MB to `data/raw/`).
+`global_beats_mean_local_auc = true`. **Correction (October 2026):** earlier
+versions of this table (global AUC 0.990, PR-AUC 0.926) were measured on a
+truncated download — 89,900 of the 284,807 rows, then capped to 30k rows
+keeping every fraud, which enriched the fraud rate roughly 10x and inflated
+PR-AUC and precision. The loader now refuses an incomplete file, and these
+numbers come from the full, uncapped dataset at its real fraud rate. The very
+low precision at a fixed 0.5 threshold is that real base rate showing through;
+AUC and PR-AUC are the headline metrics. See `docs/SECURITY.md` §5.
+Reproduce with `python -m aris.fl.run --dataset ulb --rounds 5 --epochs 2`
+(the first run downloads ~150 MB to `data/raw/`).
 
 Tests: `pytest` → **188 passed** (M0 + M1 + M2), including `test_synthetic_global_beats_mean_local_auc`. M0 Anu demo still blocks ACC-999.
 
@@ -111,7 +113,7 @@ From the repo root, with dependencies installed (`pip install -r requirements.tx
 
 ```bash
 python -m aris.fl.run --dataset synthetic --banks 5 --rounds 8 --epochs 4
-python -m aris.fl.run --dataset ulb --banks 5 --rounds 5 --epochs 2 --max-rows 30000
+python -m aris.fl.run --dataset ulb --banks 5 --rounds 5 --epochs 2
 pytest
 ```
 
@@ -156,16 +158,25 @@ Writes `data/processed/m1_metrics_<dataset>.json` and `data/processed/m1_global_
 | noise_multiplier | epsilon (upper bound) | Global AUC |
 | --- | --- | --- |
 | — (M1 baseline, no DP) | — | 0.655 |
-| 0.5 | 364.6 | 0.634 |
-| 1.0 | 118.3 | 0.635 |
-| 2.0 | 43.1 | 0.632 |
-| 4.0 | 17.6 | 0.633 |
-| 8.0 | 7.8 | 0.629 |
-| 15.0 | 3.9 | 0.638 |
-| 30.0 | 1.9 | 0.613 |
-| 60.0 | 0.9 | 0.556 |
+| 0.5 | 364.6 | 0.623 |
+| 1.0 | 118.3 | 0.623 |
+| 2.0 | 43.1 | 0.623 |
+| 4.0 | 17.6 | 0.619 |
+| 8.0 | 7.8 | 0.617 |
+| 15.0 | 3.9 | 0.616 |
+| 30.0 | 1.9 | 0.605 |
+| 60.0 | 0.9 | 0.522 |
 
-Since the noise is now genuinely random rather than seed-derived, individual rows fluctuate a little run to run (across 20 repeated runs at `noise_multiplier=8.0`, AUC stayed within 0.627–0.643, well clear of both M1's mean-of-local baseline and the 60.0 tail) — the trend, not any single row, is the result: AUC degrades gracefully as epsilon shrinks and stays clearly better than a coin flip even at sub-1 epsilon. Tests: `pytest` → **188 passed** (M0 + M1 + M2), including convergence, epsilon-monotonicity, and RNG-separation checks in `tests/test_fl_m2.py` / `tests/test_fl_privacy.py`.
+Re-measured after the October 2026 fix that made the DP-SGD class weight a
+public hyperparameter (`TrainConfig.dp_pos_weight`, default 1.0) instead of one
+derived from each client's private labels — the label-derived weight broke the
+per-example sensitivity the accountant assumes, so the earlier epsilons were
+understated (`docs/SECURITY.md` §5). Since the noise is genuinely random rather
+than seed-derived, individual rows fluctuate run to run: across 20 repeated
+runs at `noise_multiplier=8.0`, AUC stayed within 0.608–0.633 (mean 0.622),
+clear of both M1's mean-of-local baseline (0.572) and the 60.0 tail. The trend,
+not any single row, is the result: AUC degrades gracefully as epsilon shrinks
+and stays better than a coin flip even at sub-1 epsilon.
 
 #### How to run M2
 
@@ -316,6 +327,33 @@ python -m aris.fl.run --dataset synthetic --use-graph-features --banks 5 --round
 python -m aris.loadtest --backend memory --publishers 20 --signals 200
 python scripts/generate_all_reports.py
 ```
+
+## Frontend — the reviewer portal
+
+`frontend/app` (Vite + React + TypeScript) is built strictly from the design
+system in `frontend/aris-design-system`. It tells the hero story live — Bank B
+flags ACC-999, Anu's transfer at Bank A is blocked, a hostile member's forged
+retraction is rejected — against the real BankBot API, not an animation, and
+every figure on it comes from `frontend/app/public/data/metrics.json`, measured
+by one script on one commit.
+
+```bash
+# one-time
+cd frontend/app && npm ci && cd ../..
+
+# build the app, then serve it plus the live demo backend on http://127.0.0.1:8000
+(cd frontend/app && npm run build)
+python -m aris.demo.server            # prints the analyst-view investigator key
+
+# re-measure everything the page shows (trains, sweeps, load tests, full test suite)
+python scripts/export_frontend_data.py
+```
+
+For frontend development, run `python -m aris.demo.server` and `npm run dev`
+(Vite proxies `/api` and `/demo` to it). Tests: `npm test` (Vitest, unit and
+component) and `npm run test:e2e` (Playwright against the real showcase server
+serving the production build — story flows, analyst view, measured values,
+axe accessibility in both themes, 375px layout, offline behaviour). Both run in CI.
 
 ## Domain split (quick)
 

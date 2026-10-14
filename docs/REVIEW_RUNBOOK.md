@@ -44,8 +44,8 @@ mypy
 ARIS_SALT=$(python -c "import secrets;print(secrets.token_hex(32))") pytest -p no:warnings
 ```
 
-Expect: `All checks passed!`, `Success: no issues found in 40 source files`,
-a progress line of dots, then **`407 passed in ~50s`** (with `docker compose up -d` and SoftHSM2 installed; without them the Kafka/mTLS/HSM suites skip cleanly). `ARIS_SALT` is
+Expect: `All checks passed!`, `Success: no issues found in 44 source files`,
+a progress line of dots, then **`926 passed in ~90s`** (with `docker compose up -d` and SoftHSM2 installed; without them the Kafka/mTLS/HSM suites skip cleanly). `ARIS_SALT` is
 generated fresh and thrown away on purpose — proves the code fails closed
 with no key configured, rather than falling back to a default, and the
 suite provides its own key for the parts that need one.
@@ -248,6 +248,25 @@ id Bank B published, and the authority refusing a wrong bank key and a client
 pinned to a different authority key. Needs `docker compose up -d` from step 0.
 
 ---
+
+## 4d. The reviewer portal, live
+
+**Shows:** the whole system in one page — the hero story against the real
+BankBot API, a transfer form and decision log, the analyst view, and every
+measured result — built on the design system.
+
+```bash
+(cd frontend/app && npm ci && npm run build)
+python -m aris.demo.server          # http://127.0.0.1:8000
+```
+
+Click **Play the whole story**: Bank B flags ACC-999, Anu's transfer comes back
+**Blocked**, BANK-EVIL's forged "score 0" is **Rejected: signature invalid**.
+Turn on **Privacy lens** to swap every account number for the risk_id the
+network actually sees. In **Try it**, open the blocked transfer's record in the
+analyst view with the investigator key the server printed at startup. If a
+reviewer asks whether the page is real: stop the server and reload — it shows
+"the live demo server isn't running" and no decisions, rather than faking any.
 
 ## 5. The measured numbers, reproduced live
 

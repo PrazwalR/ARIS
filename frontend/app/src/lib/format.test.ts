@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fixed, isValidIfsc, parseRupees, percent, rupees, scientific } from "./format";
+import { fixed, grouped, isValidIfsc, parseRupees, percent, rupees, scientific } from "./format";
 import { pillDecision } from "./api";
 import { skyPhaseFor } from "./ui";
 
@@ -44,6 +44,12 @@ describe("isValidIfsc", () => {
   it.each(["HDFC1001234", "HDF0001234", "HDFC00012345", "HDFC000123!", ""])("rejects %j", (s) =>
     expect(isValidIfsc(s)).toBe(false),
   );
+});
+
+describe("grouped", () => {
+  it("groups counts internationally, not in lakhs", () => {
+    expect(grouped(227_845)).toBe("227,845");
+  });
 });
 
 describe("misc", () => {

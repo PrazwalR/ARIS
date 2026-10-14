@@ -29,8 +29,10 @@ export function parseRupees(text: string): number | null {
   return minor > 0 && Number.isSafeInteger(minor) ? minor : null;
 }
 
+/** Counts (rows, signals) use international grouping; Indian grouping is
+ * reserved for rupee amounts, per the design system. */
 export function grouped(value: number, digits = 0): string {
-  return value.toLocaleString("en-IN", {
+  return value.toLocaleString("en-US", {
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
   });

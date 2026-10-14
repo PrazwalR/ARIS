@@ -18,7 +18,7 @@ export function Metrics({ data }: { data: MetricsData }) {
     ...ds.local.map((l, i) => ({
       label: i === 0 ? "Each bank alone" : undefined,
       points: l.roc,
-      labelY: 0.82,
+      labelY: 0.9,
     })),
     { label: "Banks together", points: ds.global.roc, emphasis: true, labelY: 0.98 },
   ];

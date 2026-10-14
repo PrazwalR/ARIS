@@ -12,10 +12,9 @@ ARIS_SALT=$(python -c "import secrets;print(secrets.token_hex(32))") \
     python scripts/generate_metrics_report.py --dataset synthetic
 
 ARIS_SALT=$(python -c "import secrets;print(secrets.token_hex(32))") \
-    python -m aris.fl.run --dataset ulb --max-rows 30000 --rounds 5 --epochs 2
+    python -m aris.fl.run --dataset ulb --rounds 5 --epochs 2
 ARIS_SALT=$(python -c "import secrets;print(secrets.token_hex(32))") \
-    python scripts/generate_metrics_report.py --dataset ulb \
-        --max-rows 30000 --rounds 5 --epochs 2
+    python scripts/generate_metrics_report.py --dataset ulb --rounds 5 --epochs 2
 ```
 
 `aris.fl.run` writes the tables' numbers to `data/processed/m1_metrics_<dataset>.json`.
@@ -84,33 +83,39 @@ trade-off in either direction.
 
 ## ULB credit-card fraud — 5 banks, temporal shards, 5 rounds × 2 epochs
 
-Real, PCA-anonymized transaction data (auto-downloaded, capped at 30k rows
-keeping all fraud). Banks are split by **time window**, not by identity —
-each bank trains on a different slice of the timeline, and the holdout is
-the most recent time slice, unseen by any bank during training. Fraud rate
-in the holdout: 34/6000 (~0.57%) — far more imbalanced than synthetic,
-which is why accuracy is a much weaker headline metric here (predicting
-"not fraud" for every row would already score >99%).
+Real, PCA-anonymized transaction data: the full published dataset, 284,807
+transactions over two days, 492 of them fraud. Banks are split by **time
+window**, not by identity — each bank trains on a different slice of the
+timeline, and the holdout is the most recent 20% of time, unseen by any bank
+during training: 56,962 rows, 75 fraud (0.13%). Predicting "not fraud" for
+every row would already score 99.87% accuracy here.
+
+**Correction (October 2026).** An earlier version of this section reported
+global AUC 0.990 and PR-AUC 0.926 from a truncated download (89,900 of the
+284,807 rows) further capped to 30k rows keeping every fraud — a fraud rate
+roughly 10x the real one, which inflated PR-AUC and precision. The loader now
+refuses incomplete files and the numbers below use the full, uncapped data.
 
 | Model | AUC | PR-AUC | Precision @ 0.5 | Recall @ 0.5 | Accuracy @ 0.5 |
 | --- | --- | --- | --- | --- | --- |
-| BANK-A (local only) | 0.997 | 0.879 | 0.219 | 0.941 | 0.981 |
-| BANK-B (local only) | 0.960 | 0.866 | 0.341 | 0.882 | 0.990 |
-| BANK-C (local only) | 0.984 | 0.904 | 0.304 | 0.912 | 0.988 |
-| BANK-D (local only) | 0.967 | 0.846 | 0.191 | 0.912 | 0.978 |
-| BANK-E (local only) | 0.984 | 0.882 | 0.162 | 0.912 | 0.973 |
-| Mean of 5 local models | 0.978 | 0.875 | 0.244 | 0.912 | 0.982 |
-| **Global FedAvg** | **0.990** | **0.926** | **0.239** | **0.941** | **0.983** |
+| BANK-A (local only) | 0.972 | 0.708 | 0.072 | 0.867 | 0.985 |
+| BANK-B (local only) | 0.966 | 0.675 | 0.041 | 0.840 | 0.974 |
+| BANK-C (local only) | 0.963 | 0.774 | 0.008 | 0.933 | 0.839 |
+| BANK-D (local only) | 0.975 | 0.657 | 0.100 | 0.853 | 0.990 |
+| BANK-E (local only) | 0.966 | 0.709 | 0.018 | 0.920 | 0.935 |
+| Mean of 5 local models | 0.969 | 0.704 | 0.048 | 0.883 | 0.945 |
+| **Global FedAvg** | **0.990** | **0.793** | **0.041** | **0.907** | **0.972** |
+
+Federation helps on real data too: the global model beats every bank's
+local-only model on AUC and the local mean on PR-AUC (0.793 vs 0.704).
 
 **Read the precision column carefully — this is the honest part.** Every
-model's precision is low (0.16-0.34) despite AUC near 0.99 and accuracy
-near 0.98. That's not a contradiction, it's what a ~0.6%-fraud problem
-does at a fixed 0.5 threshold: even a small false-positive *rate* produces
-many false-positive *rows* relative to the handful of true fraud rows.
-This is exactly why AUC/PR-AUC (which sweep every threshold) are the
-metrics that matter here, and why a real deployment would tune the
-decision threshold against a cost model (a missed fraud vs. a false
-alarm), not use a blanket 0.5 cut.
+model's precision at a fixed 0.5 threshold is low (0.008–0.100) despite AUC
+near 0.97–0.99. That is what a 0.13%-fraud problem does at a blanket
+threshold: even a small false-positive *rate* produces far more
+false-positive *rows* than there are fraud rows. AUC and PR-AUC sweep every
+threshold and are the metrics that matter here; a real deployment tunes the
+threshold against the cost of a missed fraud versus a false alarm.
 
 <p float="left">
   <img src="assets/metrics/ulb_roc.png" width="49%" alt="ULB ROC curves, 5 local banks vs global FedAvg">
@@ -118,32 +123,29 @@ alarm), not use a blanket 0.5 cut.
 </p>
 
 **Is 0.99 AUC overfitting?** No — checked directly, not assumed. The same
-global model scored against the *training* rows it did see gets AUC
-0.9945; scored against this *holdout* it never saw, AUC 0.9902. A 0.004
-gap is what genuine generalization looks like — overfitting would show up
-as a large gap (near-perfect on train, much worse on holdout), not an
-near-identical one. ULB's `V1`-`V28` PCA features are also known to be
-highly separable for fraud in general — published results on this exact
-dataset routinely report AUC in the 0.95-0.99 range with standard models,
-so this is consistent with the wider literature, not an outlier result.
+global model scored against the 227,845 *training* rows it did see gets AUC
+0.992; against the 56,962-row *holdout* it never saw, 0.990. A 0.002 gap is
+what genuine generalization looks like — overfitting would show up as a large
+gap. ULB's `V1`-`V28` PCA features are known to be highly separable for fraud;
+published results on this dataset routinely report AUC in the 0.95–0.99 range
+with standard models.
 
-**Confusion matrices** (at the same 0.5 threshold, 6000-row holdout, 34
-actual fraud):
+**Confusion matrices** (same 0.5 threshold, 56,962-row holdout, 75 actual
+fraud):
 
 <img src="assets/metrics/ulb_confusion.png" width="98%" alt="ULB confusion matrices, 5 local banks vs global FedAvg">
 
-This is the picture behind the low precision numbers above: every model's
-"pred: fraud" column has far more false positives (58-160) than true
-positives (30-32) simply because there are only 34 real fraud rows to
-find among 6000 — the recall (catching 30-32 of 34) is what's genuinely
-strong here, not the raw false-positive count.
+The global model catches 68 of the 75 frauds with 1,602 false alarms among
+56,887 legitimate rows (a 2.8% false-positive rate). Individual banks range
+from 577 false alarms (BANK-D, catching 64) to 9,147 (BANK-C, catching 70) —
+one bank's model alone is either noticeably less sensitive or far noisier.
 
 ---
 
 ## Why AUC/PR-AUC lead, and accuracy/precision/recall are secondary
 
-Both datasets are imbalanced (26% and 0.6% fraud respectively). A model
-that predicts "not fraud" for every row scores ~74% and ~99% accuracy on
+Both datasets are imbalanced (26% and 0.13% fraud respectively). A model
+that predicts "not fraud" for every row scores ~74% and ~99.9% accuracy on
 them respectively while catching zero fraud — so accuracy alone can look
 good while being useless. Precision and recall are more honest but are
 tied to one arbitrary threshold (0.5 here); ULB's low precision numbers
