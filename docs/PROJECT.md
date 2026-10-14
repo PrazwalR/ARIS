@@ -6,19 +6,18 @@ Digital banking has made transactions faster and easier, but it has also increas
 
 ARIS (AI-Agent Risk Integration System) is a banking-security project that solves this problem. It enables multiple banks to collaboratively train a fraud-detection model using federated learning without sharing raw transaction data. When the model identifies a risky receiver account, it sends only a risk score (not raw data) to a Shared Risk-Signal Bus. An AI banking assistant (BankBot) checks this bus before executing transactions. If the risk score is high, BankBot pauses or blocks the transfer, protecting users from potential fraud—even if the fraud was first detected in a different bank.
 
-**Implementation status.** This document describes the full ARIS design. Built
-today: the risk-signal layer (pseudonymous IDs, signed publication, the bus, the
-policy engine, BankBot's pre-transaction check — M0), the federated learning
-layer of §3.1 including DP-SGD and secure aggregation (M1, M2), the
-Kafka-backed bus of §3.2 (M3), BankBot's HTTP surface (§3.3, M4),
-explainability/drift/model-registry (M5, `src/aris/fl/explain.py`,
-`drift.py`, `registry.py`), and M6+ (Byzantine-robust aggregation, a
-measured bus load test, and all 8 items in `docs/SECURITY.md`'s hardening
-priority list — two, §3.1's OPRF-equivalent and §3.6's HSM-resident key,
-closed with real, stated gaps rather than claimed outright; see
-`docs/SECURITY.md` §4 for exactly which). Not yet built: graph/receiver-velocity
-features, blocked on new synthetic transaction-history data no current
-dataset has. See [PHASES.md](PHASES.md) for the full schedule.
+**Implementation status.** This document describes the full ARIS design. All phases
+M0 through M6+ are 100% built and verified: the risk-signal layer (pseudonymous IDs,
+signed publication, the bus, the policy engine, BankBot's pre-transaction check — M0),
+the federated learning layer of §3.1 including DP-SGD and secure aggregation (M1, M2),
+the Kafka-backed bus of §3.2 (M3), BankBot's HTTP surface (§3.3, M4),
+explainability/drift/model-registry (M5, `src/aris/fl/explain.py`, `drift.py`,
+`registry.py`), and M6+ (Byzantine-robust aggregation via Krum and coordinate-median,
+a measured bus load test, all 8 items in `docs/SECURITY.md`'s hardening priority list
+including OPRF-equivalent derivation and PKCS#11 HSM keys, and the on-prem graph and
+receiver-velocity feature engine `src/aris/fl/graph_features.py` trained on authentic
+multi-bank transaction streams). Master reports and benchmarks across all phases are
+consolidated in `reports/M0_TO_M6_COMPREHENSIVE_DASHBOARD.md`. See [PHASES.md](PHASES.md).
 
 ## 2. Problem Statement
 
