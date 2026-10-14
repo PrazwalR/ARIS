@@ -54,6 +54,7 @@ class BankFlowerClient(NumPyClient):
                 batch_size=int(config.get("batch_size", 256)),
                 lr=float(config.get("learning_rate", 0.05)),
                 seed=self.seed + int(config.get("server_round", 0)),
+                momentum=float(config.get("momentum", 0.0)),
             )
         metrics: dict[str, Any] = {**loss_metrics, "bank_id": self.bank_id}
         return get_weights(self.model), len(self.y), metrics

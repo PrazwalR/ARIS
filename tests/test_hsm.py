@@ -15,8 +15,9 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-import pkcs11
 import pytest
+
+pkcs11 = pytest.importorskip("pkcs11", reason="pkcs11 not installed (optional [hsm] extra)")
 from pkcs11 import Attribute, Mechanism
 
 from aris.hashing import current_epoch

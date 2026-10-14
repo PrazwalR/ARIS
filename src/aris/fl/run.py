@@ -79,8 +79,10 @@ def run_experiment(
         for i in range(cfg.num_banks)
     ]
 
-    local_metrics = _train_local_baselines(clients, x_te, y_te, cfg)
-    global_weights, round_log, dp_steps_per_client = _federated_train(clients, cfg)
+    local_metrics, local_epoch_trajectories = _train_local_baselines(clients, x_te, y_te, cfg)
+    global_weights, round_log, dp_steps_per_client, federated_round_trajectories = _federated_train(
+        clients, cfg, x_te=x_te, y_te=y_te
+    )
     global_model = new_model(clients[0].x.shape[1], hidden=cfg.hidden, seed=cfg.seed)
     set_weights(global_model, global_weights)
     global_scores = predict_scores(global_model, x_te)
@@ -138,6 +140,8 @@ def run_experiment(
             "differential_privacy": _dp_report(cfg, dp_steps_per_client),
         },
         "rounds_log": round_log,
+        "local_epoch_metrics": local_epoch_trajectories,
+        "federated_round_metrics": federated_round_trajectories,
         "model_version": "v0.4-fl",
     }
 
@@ -171,24 +175,47 @@ def _train_local_baselines(
     x_te: npt.NDArray[Any],
     y_te: npt.NDArray[Any],
     cfg: TrainConfig,
-) -> list[dict[str, float]]:
-    """Same local steps as FL (epochs x rounds) so the comparison is fair."""
+) -> tuple[list[dict[str, float]], list[dict[str, Any]]]:
+    """Same local steps as FL (epochs x rounds) with epoch-by-epoch tracking."""
     rows = []
+    epoch_trajectories = []
     total_epochs = cfg.local_epochs * cfg.rounds
+    print(f"\n{'='*32} LOCAL BANK BASELINES TRAINING ({total_epochs} EPOCHS) {'='*32}")
     for i, client in enumerate(clients):
         model = new_model(client.x.shape[1], hidden=cfg.hidden, seed=cfg.seed + 100 + i)
-        train_local(
-            model,
-            client.x,
-            client.y,
-            epochs=total_epochs,
-            batch_size=cfg.batch_size,
-            lr=cfg.learning_rate,
-            seed=cfg.seed + i,
-        )
+        print(f"\n>>> Training Local Baseline: {client.bank_id} ({len(client.y)} samples, {int(client.y.sum())} fraud) <<<")
+        print(f"{'Epoch':^7} | {'Loss':^9} | {'Holdout Acc':^11} | {'ROC-AUC':^9} | {'PR-AUC':^9} | {'Precision':^9} | {'Recall':^9}")
+        print("-" * 75)
+        for ep in range(1, total_epochs + 1):
+            train_metrics = train_local(
+                model,
+                client.x,
+                client.y,
+                epochs=1,
+                batch_size=cfg.batch_size,
+                lr=cfg.learning_rate,
+                seed=cfg.seed + i + ep * 1000,
+                momentum=cfg.momentum,
+            )
+            scores = predict_scores(model, x_te)
+            m = classification_metrics(y_te, scores)
+            loss_val = float(train_metrics.get("loss", 0.0))
+            record = {
+                "bank_id": client.bank_id,
+                "epoch": ep,
+                "loss": loss_val,
+                **m,
+            }
+            epoch_trajectories.append(record)
+            if ep == 1 or ep % max(1, total_epochs // 5) == 0 or ep == total_epochs:
+                print(
+                    f"{ep:^7d} | {loss_val:^9.4f} | {m['accuracy_at_0_5']:^11.4f} | "
+                    f"{m['auc']:^9.4f} | {m['pr_auc']:^9.4f} | {m['precision_at_0_5']:^9.4f} | {m['recall_at_0_5']:^9.4f}"
+                )
         scores = predict_scores(model, x_te)
-        rows.append(classification_metrics(y_te, scores))
-    return rows
+        final_m = classification_metrics(y_te, scores)
+        rows.append(final_m)
+    return rows, epoch_trajectories
 
 
 def _aggregate(
@@ -213,10 +240,16 @@ def _aggregate(
 def _federated_train(
     clients: list[BankFlowerClient],
     cfg: TrainConfig,
-) -> tuple[list[npt.NDArray[Any]], list[dict[str, Any]], dict[str, int]]:
+    x_te: npt.NDArray[Any] | None = None,
+    y_te: npt.NDArray[Any] | None = None,
+) -> tuple[list[npt.NDArray[Any]], list[dict[str, Any]], dict[str, int], list[dict[str, Any]]]:
     weights = clients[0].get_parameters({})
     logs = []
     dp_steps_per_client: dict[str, int] = {c.bank_id: 0 for c in clients}
+    round_trajectories: list[dict[str, Any]] = []
+
+    print(f"\n{'='*30} FEDERATED LEARNING ({cfg.rounds} ROUNDS x {cfg.local_epochs} LOCAL EPOCHS) {'='*30}")
+
     for rnd in range(1, cfg.rounds + 1):
         config = {
             "local_epochs": cfg.local_epochs,
@@ -226,26 +259,62 @@ def _federated_train(
             "dp_enabled": cfg.dp_enabled,
             "max_grad_norm": cfg.max_grad_norm,
             "noise_multiplier": cfg.noise_multiplier,
+            "momentum": cfg.momentum,
         }
         updates: list[tuple[list[npt.NDArray[Any]], int]] = []
+        client_evals: dict[str, dict[str, float]] = {}
+
         for client in clients:
             new_w, n, fit_metrics = client.fit(weights, config)
             updates.append((new_w, n))
             if cfg.dp_enabled:
                 if "dp_steps" not in fit_metrics:
-                    # Never default this to 0: it silently understates
-                    # dp_steps_per_client, which silently understates the reported
-                    # epsilon -- a wrong "this run is more private than it is"
-                    # result is worse than a crash here.
                     raise KeyError(
                         f"dp_enabled=True but fit() for {client.bank_id!r} returned no "
                         "'dp_steps' metric -- train_local_dp must always report it. "
                         "Refusing to silently default to 0 and understate epsilon."
                     )
                 dp_steps_per_client[client.bank_id] += int(fit_metrics["dp_steps"])
+
+            if x_te is not None and y_te is not None:
+                client_scores = predict_scores(client.model, x_te)
+                client_m = classification_metrics(y_te, client_scores)
+                client_m["loss"] = float(fit_metrics.get("loss", 0.0))
+                client_evals[client.bank_id] = client_m
+
         weights = _aggregate(updates, cfg, seed_offset=rnd)
         logs.append({"round": rnd, "clients": len(updates)})
-    return weights, logs, dp_steps_per_client
+
+        # Evaluate the global aggregated model on holdout
+        global_m: dict[str, float] = {}
+        if x_te is not None and y_te is not None:
+            temp_global = new_model(clients[0].x.shape[1], hidden=cfg.hidden, seed=cfg.seed)
+            set_weights(temp_global, weights)
+            global_scores = predict_scores(temp_global, x_te)
+            global_m = classification_metrics(y_te, global_scores)
+
+            print(f"\n[Round {rnd}/{cfg.rounds}] Federated Evaluation across Banks & Global Consensus:")
+            print(f"{'Entity':^9} | {'Loss':^9} | {'Holdout Acc':^11} | {'ROC-AUC':^9} | {'PR-AUC':^9} | {'Precision':^9} | {'Recall':^9}")
+            print("-" * 77)
+            for c in clients:
+                cm = client_evals.get(c.bank_id, {})
+                print(
+                    f"{c.bank_id:^9} | {cm.get('loss', 0.0):^9.4f} | {cm.get('accuracy_at_0_5', 0.0):^11.4f} | "
+                    f"{cm.get('auc', 0.0):^9.4f} | {cm.get('pr_auc', 0.0):^9.4f} | "
+                    f"{cm.get('precision_at_0_5', 0.0):^9.4f} | {cm.get('recall_at_0_5', 0.0):^9.4f}"
+                )
+            print(
+                f"{'GLOBAL':^9} | {'--':^9} | {global_m['accuracy_at_0_5']:^11.4f} | "
+                f"{global_m['auc']:^9.4f} | {global_m['pr_auc']:^9.4f} | "
+                f"{global_m['precision_at_0_5']:^9.4f} | {global_m['recall_at_0_5']:^9.4f}"
+            )
+            round_trajectories.append({
+                "round": rnd,
+                "clients": client_evals,
+                "global": global_m,
+            })
+
+    return weights, logs, dp_steps_per_client, round_trajectories
 
 
 def write_report(report: dict[str, Any], path: Path) -> None:
@@ -301,6 +370,12 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="M2: aggregate via pairwise-masked secure sum instead of plain FedAvg",
     )
+    parser.add_argument(
+        "--momentum",
+        type=float,
+        default=0.0,
+        help="SGD momentum factor (e.g. 0.9 for faster smoother convergence)",
+    )
     args = parser.parse_args(argv)
 
     cfg = TrainConfig(
@@ -308,6 +383,7 @@ def main(argv: list[str] | None = None) -> int:
         rounds=args.rounds,
         local_epochs=args.epochs,
         max_train_rows=args.max_rows,
+        momentum=args.momentum,
         dp_enabled=args.dp,
         noise_multiplier=args.noise_multiplier,
         max_grad_norm=args.max_grad_norm,

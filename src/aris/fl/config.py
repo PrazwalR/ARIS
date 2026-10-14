@@ -33,6 +33,7 @@ class TrainConfig:
     seed: int = 42
     hidden: int = 16
     max_train_rows: int | None = None  # cap ULB for a faster laptop run
+    momentum: float = 0.0  # SGD momentum, 0.0 retains exact vanilla SGD
 
     # M2 -- differential privacy (DP-SGD, see aris.fl.privacy). Off by default so
     # M1 behavior is unchanged unless a caller opts in.

@@ -82,15 +82,25 @@ def train_local(
     batch_size: int,
     lr: float,
     seed: int = 0,
-) -> dict[str, float]:
+    momentum: float = 0.0,
+    on_epoch_end: Any | None = None,
+) -> dict[str, Any]:
     rng = np.random.default_rng(seed)
     x = np.asarray(x, dtype=np.float32)
     y = np.asarray(y, dtype=np.float32)
     pos_weight = _pos_weight(y)
     n = len(y)
     last = 0.0
-    for _ in range(epochs):
+    v_w1 = np.zeros_like(model.w1)
+    v_b1 = np.zeros_like(model.b1)
+    v_w2 = np.zeros_like(model.w2)
+    v_b2 = np.zeros_like(model.b2)
+    epoch_losses: list[float] = []
+
+    for ep in range(epochs):
         order = rng.permutation(n)
+        ep_loss = 0.0
+        n_batches = 0
         for start in range(0, n, batch_size):
             idx = order[start : start + batch_size]
             xb, yb = x[idx], y[idx]
@@ -99,7 +109,9 @@ def train_local(
             # weighted BCE gradient on logits
             w = np.where(yb > 0.5, pos_weight, 1.0).astype(np.float32)
             grad_z = (w * (p - yb) / max(len(yb), 1)).astype(np.float32)
-            last = _weighted_bce_loss(p, yb, w)
+            b_loss = _weighted_bce_loss(p, yb, w)
+            ep_loss += b_loss
+            n_batches += 1
 
             grad_w2 = h.T @ grad_z.reshape(-1, 1)
             grad_b2 = grad_z.sum(axis=0, keepdims=True)
@@ -108,11 +120,27 @@ def train_local(
             grad_w1 = xb.T @ grad_h
             grad_b1 = grad_h.sum(axis=0)
 
-            model.w2 -= lr * grad_w2.astype(np.float32)
-            model.b2 -= lr * grad_b2.reshape(-1).astype(np.float32)
-            model.w1 -= lr * grad_w1.astype(np.float32)
-            model.b1 -= lr * grad_b1.astype(np.float32)
-    return {"loss": last}
+            if momentum > 0.0:
+                v_w2 = momentum * v_w2 + lr * grad_w2.astype(np.float32)
+                v_b2 = momentum * v_b2 + lr * grad_b2.reshape(-1).astype(np.float32)
+                v_w1 = momentum * v_w1 + lr * grad_w1.astype(np.float32)
+                v_b1 = momentum * v_b1 + lr * grad_b1.astype(np.float32)
+                model.w2 -= v_w2
+                model.b2 -= v_b2
+                model.w1 -= v_w1
+                model.b1 -= v_b1
+            else:
+                model.w2 -= lr * grad_w2.astype(np.float32)
+                model.b2 -= lr * grad_b2.reshape(-1).astype(np.float32)
+                model.w1 -= lr * grad_w1.astype(np.float32)
+                model.b1 -= lr * grad_b1.astype(np.float32)
+
+        last = ep_loss / max(n_batches, 1)
+        epoch_losses.append(last)
+        if on_epoch_end is not None:
+            on_epoch_end(ep + 1, last)
+
+    return {"loss": last, "epoch_losses": epoch_losses}
 
 
 def train_local_dp(
