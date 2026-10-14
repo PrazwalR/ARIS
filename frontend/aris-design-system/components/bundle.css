@@ -1,0 +1,185 @@
+@import url("https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap");
+
+/* ARIS component styles. Every colour, space, radius and shadow is a token from tokens.json.
+   Motion values live here (tokens.json has no motion family). */
+:root {
+  --ar-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --ar-ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+  --ar-dur-ui: 320ms;
+  --ar-dur-reveal: 600ms;
+  --ar-dur-story: 1600ms;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  color: var(--ink-900);
+  background: var(--surface-000);
+  -webkit-font-smoothing: antialiased;
+}
+
+.ar-row { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: center; padding: var(--space-4); }
+.ar-stack { display: grid; gap: var(--space-4); padding: var(--space-4); }
+
+:where(.ar-btn, .ar-toggle, .ar-hash, .ar-flip, .ar-card[tabindex]):focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* Button */
+.ar-btn {
+  position: relative; overflow: hidden;
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  font: 600 15px/20px var(--font-sans);
+  padding: var(--space-3) var(--space-5);
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background-color 320ms cubic-bezier(0.22, 1, 0.36, 1), transform 320ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.ar-btn svg { width: 18px; height: 18px; flex: none; }
+.ar-btn-primary { background: var(--sky-500); color: var(--on-sky); box-shadow: var(--shadow-sm); }
+.ar-btn-primary:hover { background: var(--sky-hover); box-shadow: var(--shadow-lift); }
+.ar-btn-secondary { background: var(--glass); color: var(--ink-900); border-color: var(--border-control); backdrop-filter: blur(var(--blur-glass)); }
+.ar-btn-secondary:hover { background: var(--sky-100); }
+.ar-btn-ghost { background: transparent; color: var(--sky-700); }
+.ar-btn-ghost:hover { background: var(--sky-100); }
+.ar-btn-sm { font-size: 13px; padding: var(--space-2) var(--space-4); }
+.ar-btn:active { transform: translateY(1px); }
+.ar-btn[disabled] { opacity: .5; cursor: not-allowed; }
+.ar-btn::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(105deg, rgba(255,255,255,0) 30%, rgba(255,255,255,.45) 50%, rgba(255,255,255,0) 70%);
+  transform: translateX(-120%);
+  pointer-events: none;
+}
+.ar-btn-primary:hover::after { transform: translateX(120%); transition: transform 900ms cubic-bezier(0.22, 1, 0.36, 1); }
+
+/* Status pill */
+.ar-pill {
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  font: 600 13px/18px var(--font-sans); letter-spacing: .02em; text-transform: uppercase;
+  padding: var(--space-1) 10px var(--space-1) var(--space-2);
+  border-radius: var(--radius-pill);
+}
+.ar-pill svg { width: 14px; height: 14px; }
+.ar-pill-allow { background: var(--allow-100); color: var(--allow-700); }
+.ar-pill-stepup { background: var(--stepup-100); color: var(--stepup-700); }
+.ar-pill-block { background: var(--block-100); color: var(--block-700); }
+.ar-pill-lg { font-size: 15px; padding: 6px 14px 6px 10px; }
+.ar-pill-lg svg { width: 18px; height: 18px; }
+
+/* Hash chip */
+.ar-hash {
+  display: inline-flex; align-items: center; gap: var(--space-2); max-width: 100%;
+  font: 500 12px/18px var(--font-mono); letter-spacing: .01em;
+  color: var(--ink-900); background: var(--surface-100);
+  border: 1px solid var(--border-sky); border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-2); cursor: pointer;
+  transition: background-color 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.ar-hash:hover { background: var(--sky-100); }
+.ar-hash-label { color: var(--ink-600); font-weight: 400; }
+.ar-hash-value { overflow-wrap: anywhere; text-align: left; }
+
+/* Glass card */
+.ar-card {
+  background: var(--glass);
+  backdrop-filter: blur(var(--blur-glass)); -webkit-backdrop-filter: blur(var(--blur-glass));
+  border: 1px solid var(--border-sky);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  padding: var(--space-5);
+  color: var(--ink-900);
+  transition: transform 320ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.ar-card-lift:hover { transform: translateY(-4px); box-shadow: var(--shadow-lift); }
+.ar-card-eyebrow { font: 600 13px/18px var(--font-sans); letter-spacing: .06em; text-transform: uppercase; color: var(--sky-700); margin: 0 0 var(--space-2); }
+.ar-card-title { font: 700 20px/28px var(--font-display); margin: 0 0 var(--space-2); }
+.ar-card-body { font: 400 14px/22px var(--font-sans); color: var(--ink-600); margin: 0; }
+.ar-card-icon { width: 40px; height: 40px; border-radius: var(--radius-md); background: var(--sky-100); color: var(--sky-600); display: grid; place-items: center; margin-bottom: var(--space-4); }
+.ar-card-icon svg { width: 22px; height: 22px; }
+
+/* Toggle chip */
+.ar-toggle {
+  display: inline-flex; align-items: center; gap: 10px;
+  font: 600 14px/20px var(--font-sans); color: var(--ink-900);
+  background: var(--surface-raised); border: 1px solid var(--border-control);
+  border-radius: var(--radius-md); padding: var(--space-2) var(--space-3) var(--space-2) var(--space-2);
+  cursor: pointer;
+  transition: background-color 320ms cubic-bezier(0.22, 1, 0.36, 1), border-color 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.ar-toggle-track { position: relative; width: 34px; height: 20px; border-radius: var(--radius-pill); background: var(--surface-100); border: 1px solid var(--border-control); box-sizing: border-box; transition: background-color 320ms cubic-bezier(0.22, 1, 0.36, 1); }
+.ar-toggle-knob { position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: var(--radius-pill); background: var(--ink-600); transition: transform 420ms cubic-bezier(0.34, 1.4, 0.64, 1), background-color 320ms cubic-bezier(0.22, 1, 0.36, 1); }
+.ar-toggle[aria-pressed="true"] { background: var(--sky-100); border-color: var(--sky-600); }
+.ar-toggle[aria-pressed="true"] .ar-toggle-track { background: var(--sky-500); border-color: var(--sky-600); }
+.ar-toggle[aria-pressed="true"] .ar-toggle-knob { transform: translateX(14px); background: var(--on-sky); }
+.ar-toggle-hint { font-weight: 400; color: var(--ink-600); font-size: 13px; }
+
+/* Metric tile */
+.ar-metric { display: grid; gap: var(--space-1); }
+.ar-metric-value { font: 800 56px/56px var(--font-display); letter-spacing: -.02em; font-variant-numeric: tabular-nums; color: var(--ink-900); }
+.ar-metric-value small { font: 600 18px/1 var(--font-sans); color: var(--ink-600); margin-left: var(--space-1); letter-spacing: 0; }
+.ar-metric-label { font: 600 13px/18px var(--font-sans); letter-spacing: .06em; text-transform: uppercase; color: var(--sky-700); }
+.ar-metric-context { font: 400 14px/22px var(--font-sans); color: var(--ink-600); }
+.ar-metric-context b { font: 500 13px/1 var(--font-mono); color: var(--ink-900); }
+
+/* Security flip card */
+.ar-flip { perspective: 1200px; min-height: 200px; cursor: pointer; border-radius: var(--radius-lg); }
+.ar-flip-inner { position: relative; height: 100%; min-height: inherit; transform-style: preserve-3d; transition: transform 700ms cubic-bezier(0.22, 1, 0.36, 1); }
+.ar-flip:hover .ar-flip-inner, .ar-flip:focus-visible .ar-flip-inner, .ar-flip[data-flipped="true"] .ar-flip-inner { transform: rotateY(180deg); }
+.ar-flip-face { position: absolute; inset: 0; backface-visibility: hidden; -webkit-backface-visibility: hidden; display: flex; flex-direction: column; gap: var(--space-2); box-sizing: border-box; }
+.ar-flip-back { transform: rotateY(180deg); background: var(--surface-raised); }
+.ar-flip-check { width: 32px; height: 32px; border-radius: var(--radius-pill); background: var(--allow-100); color: var(--allow-700); display: grid; place-items: center; }
+.ar-flip-check svg { width: 18px; height: 18px; }
+.ar-flip-k { font: 600 12px/16px var(--font-sans); letter-spacing: .06em; text-transform: uppercase; color: var(--ink-600); margin: 0; }
+.ar-note { align-self: flex-start; display: inline-flex; gap: var(--space-1); align-items: center; font: 600 12px/16px var(--font-sans); color: var(--stepup-700); background: var(--stepup-100); border-radius: var(--radius-pill); padding: 3px 10px 3px 6px; }
+.ar-note svg { width: 14px; height: 14px; }
+
+/* Terminal card */
+.ar-term { background: #0e2236; color: #e9f2fa; border-radius: var(--radius-md); box-shadow: var(--shadow-float); overflow: hidden; font: 400 14px/22px var(--font-mono); }
+.ar-term-bar { display: flex; gap: 6px; align-items: center; padding: 10px 14px; border-bottom: 1px solid #24435f; color: #9db4c8; font-size: 12px; }
+.ar-term-bar i { width: 10px; height: 10px; border-radius: 50%; background: #24435f; display: inline-block; }
+.ar-term-bar span { margin-left: var(--space-2); }
+.ar-term-body { padding: 14px 16px 16px; white-space: pre-wrap; min-height: 66px; }
+.ar-term-prompt { color: #6cc0f2; }
+.ar-term-ok { color: #7dd8b2; }
+.ar-term-caret { display: inline-block; width: 8px; height: 16px; background: #6cc0f2; vertical-align: -3px; animation: ar-blink 1s steps(1) infinite; }
+@keyframes ar-blink { 50% { opacity: 0; } }
+
+/* Charts */
+.ar-chart { font: 500 12px/1 var(--font-mono); color: var(--ink-600); }
+.ar-chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.ar-chart-grid { stroke: var(--chart-grid); stroke-width: 1; }
+.ar-chart-diag { stroke: var(--chart-grid); stroke-width: 1.5; stroke-dasharray: 4 4; }
+.ar-chart-axis { fill: var(--ink-600); }
+.ar-chart-title { font: 600 13px/18px var(--font-sans); fill: var(--ink-900); }
+.ar-chart-line { fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.ar-chart-draw { stroke-dasharray: 1; stroke-dashoffset: 1; animation: ar-draw 1600ms cubic-bezier(0.22, 1, 0.36, 1) forwards; }
+.ar-chart-label { font: 600 12px/1 var(--font-sans); fill: var(--ink-900); }
+.ar-chart-label-muted { font: 500 11px/1 var(--font-sans); fill: var(--ink-600); }
+@keyframes ar-draw { to { stroke-dashoffset: 0; } }
+
+/* Sky background */
+.ar-sky { position: relative; overflow: hidden; isolation: isolate; border-radius: inherit; }
+.ar-sky-grad { position: absolute; inset: 0; z-index: -2; background: linear-gradient(180deg, var(--sky-dawn-top) 0%, var(--sky-midday) 55%, var(--sky-dawn-horizon) 100%); background-size: 100% 300%; animation: ar-daycycle 75s ease-in-out infinite alternate; }
+.ar-sky-grad[data-phase="dawn"] { animation: none; background: linear-gradient(180deg, var(--sky-dawn-top), var(--sky-dawn-horizon)); }
+.ar-sky-grad[data-phase="midday"] { animation: none; background: linear-gradient(180deg, var(--sky-midday), var(--sky-dawn-top)); }
+.ar-sky-grad[data-phase="dusk"] { animation: none; background: linear-gradient(180deg, var(--sky-dusk), var(--sky-midday)); }
+.ar-sky-cloud { position: absolute; z-index: -1; border-radius: var(--radius-pill); background: var(--cloud); filter: blur(var(--blur-cloud)); animation: ar-drift 90s linear infinite alternate; }
+.ar-sky-mesh { position: absolute; inset: 0; z-index: -1; width: 100%; height: 100%; }
+.ar-sky-mesh line { stroke: var(--mesh-line); stroke-width: 1; }
+.ar-sky-mesh .ar-sky-hot { stroke: var(--sky-500); stroke-width: 1.5; stroke-dasharray: 6 200; animation: ar-signal 4s cubic-bezier(0.22, 1, 0.36, 1) infinite; }
+.ar-sky-mesh circle { fill: var(--surface-raised); stroke: var(--sky-600); stroke-width: 1.25; }
+.ar-sky-content { position: relative; }
+.ar-scrim { background: var(--scrim); border-radius: var(--radius-md); padding: var(--space-4) var(--space-5); backdrop-filter: blur(6px); }
+@keyframes ar-daycycle { 0% { background-position: 0 100%; } 100% { background-position: 0 0; } }
+@keyframes ar-drift { from { transform: translateX(-6%); } to { transform: translateX(10%); } }
+@keyframes ar-signal { from { stroke-dashoffset: 206; } to { stroke-dashoffset: 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .ar-sky-grad, .ar-sky-cloud, .ar-sky-mesh .ar-sky-hot, .ar-term-caret { animation: none !important; }
+  .ar-chart-draw { animation: none; stroke-dashoffset: 0; }
+  .ar-flip-inner, .ar-btn, .ar-card, .ar-toggle-knob { transition: none !important; }
+  .ar-btn::after { display: none; }
+}

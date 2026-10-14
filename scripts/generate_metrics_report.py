@@ -25,76 +25,14 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import numpy as np
 import numpy.typing as npt
 from sklearn.metrics import confusion_matrix, precision_recall_curve, roc_curve
 
-from aris.fl.client import BankFlowerClient
-from aris.fl.config import TrainConfig
-from aris.fl.datasets import TabularFraud, load_dataset
+from aris.fl.evaluation import train_and_score
 from aris.fl.metrics import classification_metrics
-from aris.fl.model import new_model, predict_scores, set_weights, train_local
-from aris.fl.partition import (
-    dirichlet_shards,
-    equal_contiguous_shards,
-    holdout_split,
-    named_banks,
-    pooled_holdout_from_shards,
-    temporal_shards,
-)
-from aris.fl.run import _federated_train
+from aris.fl.config import TrainConfig
 
 ASSETS = Path(__file__).resolve().parent.parent / "docs" / "assets" / "metrics"
-
-
-def build_split(
-    dataset: str, cfg: TrainConfig
-) -> tuple[TabularFraud, list[BankFlowerClient], npt.NDArray[Any], npt.NDArray[Any]]:
-    """Mirrors aris.fl.run.run_experiment's dataset/partition/holdout setup
-    exactly, so the split here matches what a real training run would use."""
-    data = load_dataset(
-        dataset, max_rows=cfg.max_train_rows, seed=cfg.seed, num_banks=cfg.num_banks
-    )
-    banks = named_banks(cfg.num_banks)
-
-    if data.name == "synthetic":
-        shards = equal_contiguous_shards(data.x, data.y, cfg.num_banks)
-        shards, x_te, y_te = pooled_holdout_from_shards(shards, cfg.holdout_frac, cfg.seed)
-    else:
-        x_tr, y_tr, x_te, y_te = holdout_split(
-            data.x, data.y, frac=cfg.holdout_frac, seed=cfg.seed, time_col=data.time
-        )
-        if data.time is not None:
-            t_tr = np.arange(len(y_tr), dtype=np.float32)
-            shards = temporal_shards(x_tr, y_tr, t_tr, cfg.num_banks)
-        else:
-            shards = dirichlet_shards(x_tr, y_tr, cfg.num_banks, cfg.dirichlet_alpha, cfg.seed)
-
-    clients = [
-        BankFlowerClient(banks[i], shards[i][0], shards[i][1], hidden=cfg.hidden, seed=cfg.seed + i)
-        for i in range(cfg.num_banks)
-    ]
-    return data, clients, x_te, y_te
-
-
-def train_local_models(clients: list[BankFlowerClient], cfg: TrainConfig) -> list[Any]:
-    """Same local steps as run.py's _train_local_baselines -- separate model
-    instances, never touching clients' own Flower-side state."""
-    total_epochs = cfg.local_epochs * cfg.rounds
-    models = []
-    for i, client in enumerate(clients):
-        model = new_model(client.x.shape[1], hidden=cfg.hidden, seed=cfg.seed + 100 + i)
-        train_local(
-            model,
-            client.x,
-            client.y,
-            epochs=total_epochs,
-            batch_size=cfg.batch_size,
-            lr=cfg.learning_rate,
-            seed=cfg.seed + i,
-        )
-        models.append(model)
-    return models
 
 
 def plot_curves(
@@ -185,25 +123,17 @@ def main(argv: list[str] | None = None) -> int:
     cfg = TrainConfig(
         num_banks=5, rounds=args.rounds, local_epochs=args.epochs, max_train_rows=args.max_rows
     )
-    data, clients, x_te, y_te = build_split(args.dataset, cfg)
+    run = train_and_score(args.dataset, cfg)
+    banks_scores = list(zip(run.bank_ids, run.local_scores, strict=True))
+    global_scores, y_te = run.global_scores, run.y_holdout
 
-    local_models = train_local_models(clients, cfg)
-    banks_scores = [
-        (clients[i].bank_id, predict_scores(local_models[i], x_te)) for i in range(len(clients))
-    ]
+    label = "Synthetic" if run.dataset == "synthetic" else "ULB credit-card fraud"
+    plot_curves(label, banks_scores, global_scores, y_te, run.dataset)
+    plot_confusion_matrices(label, banks_scores, global_scores, y_te, run.dataset)
 
-    global_weights, _, _ = _federated_train(clients, cfg)
-    global_model = new_model(clients[0].x.shape[1], hidden=cfg.hidden, seed=cfg.seed)
-    set_weights(global_model, global_weights)
-    global_scores = predict_scores(global_model, x_te)
-
-    label = "Synthetic" if data.name == "synthetic" else "ULB credit-card fraud"
-    plot_curves(label, banks_scores, global_scores, y_te, data.name)
-    plot_confusion_matrices(label, banks_scores, global_scores, y_te, data.name)
-
-    print(f"wrote {ASSETS / (data.name + '_roc.png')}")
-    print(f"wrote {ASSETS / (data.name + '_pr.png')}")
-    print(f"wrote {ASSETS / (data.name + '_confusion.png')}")
+    print(f"wrote {ASSETS / (run.dataset + '_roc.png')}")
+    print(f"wrote {ASSETS / (run.dataset + '_pr.png')}")
+    print(f"wrote {ASSETS / (run.dataset + '_confusion.png')}")
 
     g = classification_metrics(y_te, global_scores)
     print(

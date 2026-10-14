@@ -1,0 +1,16 @@
+<!-- @dsCard group="Actions" height=96 subtitle="Primary, secondary, ghost" -->
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Button — preview</title></head>
+<body>
+<div id="root" class="ar-row"></div>
+<script>
+  var A = window.Aris, h = React.createElement;
+  ReactDOM.createRoot(document.getElementById('root')).render(h(React.Fragment, null,
+    h(A.Button, { iconEnd: 'arrowRight' }, 'See how it works'),
+    h(A.Button, { variant: 'secondary' }, 'View the metrics'),
+    h(A.Button, { variant: 'ghost', icon: 'shield' }, 'Security model'),
+    h(A.Button, { size: 'sm' }, 'Run check')));
+</script>
+</body>
+</html>

@@ -93,6 +93,23 @@ def hsm_config():
         check=True,
         capture_output=True,
     )
+    # A second bank's token, provisioned up front: the PKCS#11 library
+    # enumerates slots once per process, so a token created later is invisible.
+    subprocess.run(
+        [
+            "softhsm2-util",
+            "--init-token",
+            "--free",
+            "--label",
+            f"{label}-b",
+            "--pin",
+            pin,
+            "--so-pin",
+            "5678",
+        ],
+        check=True,
+        capture_output=True,
+    )
     return {"module_path": module_path, "token_label": label, "user_pin": pin}
 
 
@@ -291,3 +308,74 @@ class TestWiredThroughBankBotAndApi:
         monkeypatch.setenv("ARIS_HSM_PIN", hsm_config["user_pin"])
         with ExitStack() as resources, pytest.raises(HsmNotConfigured):
             build_risk_ids(ApiSettings(risk_id_mode="hsm", hsm_key_label="absent"), resources)
+
+
+@requires_softhsm
+class TestConsortiumKeyIsSharedAcrossBanks:
+    """Two banks' tokens must derive the same risk_ids, or every cross-bank
+    lookup misses (and a miss resolves to allow)."""
+
+    def _second_token(self, hsm_config):
+        label = "aris-test-token-b"
+        subprocess.run(
+            [
+                "softhsm2-util",
+                "--init-token",
+                "--free",
+                "--label",
+                label,
+                "--pin",
+                "1234",
+                "--so-pin",
+                "5678",
+            ],
+            check=True,
+            capture_output=True,
+        )
+        return {**hsm_config, "token_label": label}
+
+    def test_imported_key_matches_across_tokens_and_the_hmac_scheme(self, hsm_config):
+        from aris.hashing import risk_id_for_account
+        from aris.hsm import import_consortium_key
+
+        raw = os.urandom(32)
+        other = self._second_token(hsm_config)
+        with open_hsm_session(**hsm_config) as a, open_hsm_session(**other) as b:
+            ka = import_consortium_key(a, raw, label="shared")
+            kb = import_consortium_key(b, raw, label="shared")
+            assert ka[Attribute.EXTRACTABLE] is False
+            assert ka[Attribute.SENSITIVE] is True
+            id_a = risk_id_for_account_hsm("HDFC0001234", "999988887777", ka, epoch=20000)
+            id_b = risk_id_for_account_hsm("HDFC0001234", "999988887777", kb, epoch=20000)
+        assert id_a == id_b
+        assert id_a == risk_id_for_account("HDFC0001234", "999988887777", raw, epoch=20000)
+
+    def test_imported_key_cannot_be_read_back(self, hsm_config):
+        from aris.hsm import import_consortium_key
+
+        with open_hsm_session(**hsm_config) as s:
+            key = import_consortium_key(s, os.urandom(32), label="no-readback")
+            with pytest.raises(pkcs11.AttributeSensitive):
+                key[Attribute.VALUE]
+
+    def test_wrong_length_key_is_refused(self, hsm_config):
+        from aris.hsm import import_consortium_key
+
+        with open_hsm_session(**hsm_config) as s, pytest.raises(ValueError, match="32 bytes"):
+            import_consortium_key(s, b"short", label="bad")
+
+    def test_canary_checks_the_scheme_actually_in_use(self, hsm_config, keyring, bank_b):
+        from aris.bus import InMemoryRiskBus
+        from aris.canary import check_epoch_canary, publish_epoch_canary
+        from aris.hsm import import_consortium_key
+        from aris.risk_id import HsmRiskIdDeriver
+
+        with open_hsm_session(**hsm_config) as s:
+            ours = HsmRiskIdDeriver(import_consortium_key(s, os.urandom(32), label="canary-k"))
+            drifted = HsmRiskIdDeriver(
+                import_consortium_key(s, os.urandom(32), label="canary-drift")
+            )
+            bus = InMemoryRiskBus(keyring)
+            publish_epoch_canary(bus, bank_b, risk_ids=ours)
+            assert check_epoch_canary(bus, risk_ids=ours)
+            assert not check_epoch_canary(bus, risk_ids=drifted)

@@ -44,6 +44,7 @@ class BankFlowerClient(NumPyClient):
                 max_grad_norm=float(config.get("max_grad_norm", 1.0)),
                 noise_multiplier=float(config.get("noise_multiplier", 1.0)),
                 seed=self.seed + int(config.get("server_round", 0)),
+                pos_weight=float(config.get("dp_pos_weight", 1.0)),
             )
         else:
             loss_metrics = train_local(

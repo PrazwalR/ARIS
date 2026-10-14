@@ -41,6 +41,11 @@ class TrainConfig:
     max_grad_norm: float = 1.0
     noise_multiplier: float = 1.0
     dp_delta: float = 1e-5
+    # Positive-class weight under DP-SGD. Must be public: deriving it from the
+    # client's own labels (as non-DP training does) lets one example change
+    # every other positive's clipped gradient, so the per-example sensitivity
+    # the accountant assumes no longer holds and epsilon is understated.
+    dp_pos_weight: float = 1.0
 
     # M2 -- optional secure aggregation (see aris.fl.secure_agg). Independent of
     # dp_enabled: hides individual updates from the aggregator, but says nothing
@@ -83,6 +88,8 @@ class TrainConfig:
                 )
             if self.max_grad_norm <= 0:
                 raise ValueError(f"max_grad_norm must be positive, got {self.max_grad_norm}")
+            if self.dp_pos_weight <= 0:
+                raise ValueError(f"dp_pos_weight must be positive, got {self.dp_pos_weight}")
             if not (0.0 < self.dp_delta < 1.0):
                 raise ValueError(f"dp_delta must be in (0, 1), got {self.dp_delta}")
         valid_strategies = ("fedavg", "krum", "coordinate_median")

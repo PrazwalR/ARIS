@@ -1,0 +1,12 @@
+<!-- @dsCard group="Proof" height=150 subtitle="Types a real command and result" -->
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>TerminalCard — preview</title></head>
+<body>
+<div id="root" style="padding:16px;max-width:520px"></div>
+<script>
+  var A = window.Aris, h = React.createElement;
+  ReactDOM.createRoot(document.getElementById('root')).render(h(A.TerminalCard, { command: 'pytest -q', result: '357 passed' }));
+</script>
+</body>
+</html>

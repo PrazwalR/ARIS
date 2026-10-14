@@ -76,18 +76,14 @@ def _best_tpr_at_fpr(fpr: npt.NDArray[Any], tpr: npt.NDArray[Any], max_fpr: floa
 def _fpr_at_recall(
     y_true: npt.NDArray[Any], scores: npt.NDArray[Any], target_recall: float
 ) -> float:
-    order = np.argsort(-scores)
-    y = y_true[order]
-    tp = np.cumsum(y)
-    fp = np.cumsum(1 - y)
-    pos = max(int(y_true.sum()), 1)
-    neg = max(int((1 - y_true).sum()), 1)
-    rec = tp / pos
-    hits = np.where(rec >= target_recall)[0]
+    """Lowest FPR at which recall reaches ``target_recall``, over the ROC's
+    distinct thresholds -- so tied scores are taken together, and the result
+    never depends on the order rows happen to arrive in."""
+    fpr, tpr, _ = roc_curve(y_true, scores, drop_intermediate=False)
+    hits = np.where(tpr >= target_recall)[0]
     if len(hits) == 0:
         return 1.0
-    i = int(hits[0])
-    return float(fp[i] / neg)
+    return float(fpr[int(hits[0])])
 
 
 def mean_metric(rows: list[dict[str, float]], key: str) -> float:

@@ -1,0 +1,15 @@
+<!-- @dsCard group="Surfaces" height=250 subtitle="Hover or focus to flip" -->
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>SecurityCard — preview</title></head>
+<body>
+<div id="root"></div>
+<script>
+  var A = window.Aris, h = React.createElement;
+  ReactDOM.createRoot(document.getElementById('root')).render(
+    h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: 24, padding: 16 } },
+      h(A.SecurityCard, { title: 'HSM-resident key', summary: 'The HMAC key never leaves the HSM boundary (PKCS#11).', done: 'Pseudonymisation keys are generated and used inside a PKCS#11 token; BankBot only receives HMAC outputs.', limitation: 'SoftHSM2 — real HSM hardware not available' }),
+      h(A.SecurityCard, { title: 'Key rotation', summary: 'Daily rotating HMAC keys limit linkability across days.', done: 'risk_ids are derived with a per-day key; old keys are retired on schedule so yesterday\u2019s IDs cannot be joined to today\u2019s.' })));
+</script>
+</body>
+</html>

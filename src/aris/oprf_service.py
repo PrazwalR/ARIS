@@ -31,6 +31,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from aris.api.errors import install_error_handlers
 from aris.oprf import (
     OprfAuthority,
     RateLimitExceeded,
@@ -74,6 +75,7 @@ def create_oprf_app(authority: OprfAuthority, bank_keys: dict[str, str]) -> Fast
         raise ValueError("an OPRF service with no authorized banks cannot serve anyone")
 
     app = FastAPI(title="ARIS OPRF authority")
+    install_error_handlers(app)
     app.state.authority = authority
     app.state.bank_keys = dict(bank_keys)
 
@@ -97,7 +99,9 @@ def create_oprf_app(authority: OprfAuthority, bank_keys: dict[str, str]) -> Fast
         if x_bank_id is None or x_bank_key is None:
             raise HTTPException(status_code=401, detail="missing bank credentials")
         expected = keys.get(x_bank_id)
-        if expected is None or not hmac.compare_digest(x_bank_key, expected):
+        if expected is None or not hmac.compare_digest(
+            x_bank_key.encode("utf-8"), expected.encode("utf-8")
+        ):
             raise HTTPException(status_code=401, detail="unknown bank or invalid key")
         auth: OprfAuthority = request.app.state.authority
         try:

@@ -44,14 +44,22 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--port", type=int, default=8000)
     args = parser.parse_args(argv)
 
-    if not os.environ.get(SALT_ENV_VAR):
-        os.environ[DEV_MODE_ENV_VAR] = "1"
-        print(
-            f"[api] {SALT_ENV_VAR} is not set - using the public development key.",
-            file=sys.stderr,
-        )
-
     settings = load_settings()
+    if (
+        settings.risk_id_mode == "hmac"
+        and not os.environ.get(SALT_ENV_VAR)
+        and os.environ.get(DEV_MODE_ENV_VAR) != "1"
+    ):
+        # Never fall back to the public development key on our own: every
+        # lookup would then miss what real publishers signed under, and a
+        # miss resolves to allow. Dev mode is something you opt into.
+        raise SystemExit(
+            f"[api] {SALT_ENV_VAR} is not set. Set it to the consortium key, or set "
+            f"{DEV_MODE_ENV_VAR}=1 to run against the public development key."
+        )
+    if os.environ.get(DEV_MODE_ENV_VAR) == "1" and not os.environ.get(SALT_ENV_VAR):
+        print(f"[api] {DEV_MODE_ENV_VAR}=1 - using the public development key.", file=sys.stderr)
+
     with ExitStack() as resources:
         risk_ids = build_risk_ids(settings, resources)
         bus = _bus(settings.bus_backend, build_keyring(settings))

@@ -99,7 +99,7 @@ README M2 phase log for the full table.
   `RiskBus` interface `InMemoryRiskBus` implements.
 - Query/lookup service: each `KafkaRiskBus` instance's background consumer
   thread builds a local materialized view (an internal `InMemoryRiskBus`) from
-  the compacted topic; `lookup()` reads that. As originally shipped this
+  the risk-signals topic (time-based retention since the October 2026 review -- see SECURITY.md §5); `lookup()` reads that. As originally shipped this
   replicated the whole topic, so `lookup()` never touched the network --
   re-scoped in M6+ (`docs/SECURITY.md` §3.4) to a per-`risk_id`-prefix-bucket
   view instead, once that full-replication shape turned out to leak every

@@ -184,11 +184,11 @@ Writes `data/processed/m1_metrics_synthetic.json` (single run, `privacy.differen
 
 | Piece | Where | What it does |
 | --- | --- | --- |
-| Kafka-backed bus | `src/aris/kafka_bus.py` | `KafkaRiskBus(RiskBus)` -- publishes to a compacted topic, consumes into a local materialized view |
+| Kafka-backed bus | `src/aris/kafka_bus.py` | `KafkaRiskBus(RiskBus)` -- publishes to a retention-based topic, consumes into a local materialized view |
 | Schema Registry client | `src/aris/schema_registry.py` | Confluent wire-format encode/decode + REST registration, over plain HTTP (no `confluent-kafka`/librdkafka dependency) |
 | Local dev broker | `docker-compose.yml` | Kafka (KRaft, `apache/kafka`) + Karapace (Confluent-API-compatible Schema Registry, chosen over `cp-schema-registry` for image size) |
 
-**Architecture: reuse, don't reimplement.** `KafkaRiskBus.publish()` verifies and applies a signal to an internal `InMemoryRiskBus` first -- getting every M0 admission, replay, and quota rule for free -- then produces it to the `risk-signals` topic (key `f"{risk_id}:{bank}"`, not bare `risk_id`, so log compaction can't let one bank's contribution evict another's). A background thread consumes the same topic into that same local view through the identical `publish()` call, including this process's own records, which the existing replay guard naturally no-ops on.
+**Architecture: reuse, don't reimplement.** `KafkaRiskBus.publish()` verifies and applies a signal to an internal `InMemoryRiskBus` first -- getting every M0 admission, replay, and quota rule for free -- then produces it to the `risk-signals` topic (key `f"{risk_id}:{bank}"`; the topic uses time-based retention, not log compaction, because under compaction any member with Write could erase a peer's flag by appending a record under its key -- see docs/SECURITY.md §5). A background thread consumes the same topic into that same local view through the identical `publish()` call, including this process's own records, which the existing replay guard naturally no-ops on.
 
 **Updated in M6+ (SECURITY.md §3.4):** the paragraph above described M3 as shipped -- full-topic replication, so `lookup()` never blocked on the network. That closed one leak (a bus operator correlating per-query traffic) by opening a bigger one: every member bank's consumer downloaded every *other* bank's complete published `risk_id` set, not just the accounts it actually queried. `KafkaRiskBus` now partitions the topic by `risk_id` prefix and each instance consumes only the buckets it has actually needed -- see the M6+ phase log below for what that trades away (a cold lookup now costs a real network round trip, bounded and reported as `UNAVAILABLE` on timeout rather than silently).
 

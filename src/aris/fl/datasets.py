@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -60,12 +62,47 @@ def load_dataset(
     )
 
 
+# The published ULB/Kaggle credit-card dataset: 284,807 transactions over two
+# days, 492 of them fraud. Anything else is a partial download, and metrics
+# measured on a partial file misstate both the period covered and the fraud
+# rate (and with it PR-AUC and precision).
+ULB_EXPECTED_ROWS = 284_807
+ULB_EXPECTED_FRAUD = 492
+
+
+class IncompleteDatasetError(RuntimeError):
+    """A dataset file on disk is not the complete published dataset."""
+
+
+def _check_ulb_complete(df: pd.DataFrame, path: Path) -> None:
+    if df["Class"].isna().any():
+        raise IncompleteDatasetError(
+            f"{path} has rows with no Class label -- the file is truncated or corrupt. "
+            "Delete it and re-run to download it again."
+        )
+    rows, fraud = len(df), int(df["Class"].sum())
+    if (rows, fraud) != (ULB_EXPECTED_ROWS, ULB_EXPECTED_FRAUD):
+        raise IncompleteDatasetError(
+            f"{path} has {rows:,} rows / {fraud} fraud; the published dataset has "
+            f"{ULB_EXPECTED_ROWS:,} / {ULB_EXPECTED_FRAUD}. Delete it and re-run to "
+            "download it again."
+        )
+
+
 def ensure_ulb_csv(dest: Path | None = None) -> Path:
     dest = dest or (DATA_RAW / ULB_FILENAME)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    if dest.exists() and dest.stat().st_size > 1_000_000:
+    if dest.exists():
         return dest
-    urlretrieve(ULB_URL, dest)
+    # Download beside the destination and rename only once complete: an
+    # interrupted download must never leave a plausible-looking partial file
+    # at the real path, where it would be reused forever.
+    partial = dest.with_suffix(dest.suffix + ".part")
+    try:
+        urlretrieve(ULB_URL, partial)
+        os.replace(partial, dest)
+    finally:
+        partial.unlink(missing_ok=True)
     return dest
 
 
@@ -74,6 +111,7 @@ def load_ulb(max_rows: int | None = None, path: Path | None = None) -> TabularFr
     if not csv_path.exists():
         csv_path = ensure_ulb_csv(csv_path)
     df = pd.read_csv(csv_path)
+    _check_ulb_complete(df, csv_path)
     if max_rows is not None and len(df) > max_rows:
         # keep all fraud, downsample legit so the cap still has positives
         fraud = df[df["Class"] == 1]

@@ -51,11 +51,16 @@ class LookupResult:
     ``signal`` carries the highest live score across every bank that flagged the
     account. ``contributing_banks`` names each bank holding a live signal, which
     is what lets an analyst see that a block rests on more than one institution.
+    ``signals`` holds every bank's own live signal: whether to block is decided
+    per signal (score *and* confidence together), so one member's
+    high-score/zero-confidence entry can neither mask a peer's confident flag
+    nor stand in as corroboration for it.
     """
 
     status: LookupStatus
     signal: RiskSignal | None = None
     contributing_banks: tuple[str, ...] = ()
+    signals: tuple[RiskSignal, ...] = ()
 
     def __post_init__(self) -> None:
         # Coerce here so a backend that deserializes a status from JSON cannot
@@ -204,6 +209,7 @@ class InMemoryRiskBus(RiskBus):
                 status=LookupStatus.FOUND,
                 signal=worst,
                 contributing_banks=tuple(sorted(live)),
+                signals=tuple(live[bank] for bank in sorted(live)),
             )
 
     def purge_expired(self) -> int:

@@ -8,6 +8,8 @@ store, and safe to evaluate without further defensive checks.
 
 from __future__ import annotations
 
+import math
+
 import re
 from datetime import datetime, timedelta, timezone
 from enum import Enum
@@ -113,10 +115,12 @@ class RiskSignal(BaseModel):
     @field_validator("confidence")
     @classmethod
     def _bucket_confidence(cls, value: float) -> float:
-        # Round-half-to-even at the bucket boundary is fine here: this is
-        # anti-fingerprinting, not a threshold decision that needs a specific
-        # rounding direction the way apply_policy's score comparisons do.
-        bucketed = round(value / CONFIDENCE_BUCKET) * CONFIDENCE_BUCKET
+        # Always round DOWN. Confidence feeds a threshold (PolicyConfig.
+        # min_confidence_to_block), so rounding to nearest let a publisher's
+        # stated 0.48 become 0.50 and clear a 0.5 floor -- the quantisation
+        # itself turning a step-up into a block. The inner round() absorbs
+        # float error so an exact multiple (0.95 / 0.05) is not floored away.
+        bucketed = math.floor(round(value / CONFIDENCE_BUCKET, 9)) * CONFIDENCE_BUCKET
         return round(min(max(bucketed, 0.0), 1.0), 2)
 
     @field_validator("source_bank_id")
@@ -241,6 +245,7 @@ def apply_policy(
     *,
     confidence: float | None = None,
     contributing_banks: int = 1,
+    blocking_banks: int | None = None,
 ) -> Decision:
     """Resolve a transfer to a decision.
 
@@ -255,6 +260,12 @@ def apply_policy(
     fall out of the bottom of this function, and the bottom used to be ALLOW: a
     score of 99 resolved to "allow". Unknown values now raise, and ALLOW is only
     ever returned from a branch that explicitly decided on it.
+
+    ``blocking_banks``, when the caller has every bank's signal, is how many
+    distinct banks' *own* signals clear both ``block_at`` and
+    ``min_confidence_to_block``; that, not the single highest score, decides
+    block versus step-up. Without it, ``score``/``confidence``/
+    ``contributing_banks`` describe one signal and are judged as such.
     """
     cfg = cfg or PolicyConfig()
     try:
@@ -271,7 +282,13 @@ def apply_policy(
     if status is LookupStatus.FOUND:
         if score is None:
             raise ValueError("LookupStatus.FOUND requires a score")
+        if blocking_banks is not None and blocking_banks >= cfg.min_banks_to_block:
+            return Decision.BLOCK
         if score >= cfg.block_at:
+            if blocking_banks is not None:
+                # Some bank scored this high, but not enough banks did so with
+                # enough confidence: protect the customer without freezing them.
+                return Decision.STEP_UP
             unsure = confidence is not None and confidence < cfg.min_confidence_to_block
             uncorroborated = contributing_banks < cfg.min_banks_to_block
             # Cap at step-up rather than block: the customer is still protected,

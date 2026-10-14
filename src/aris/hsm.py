@@ -43,7 +43,7 @@ from hashlib import sha256
 from typing import Final, Protocol, cast
 
 import pkcs11
-from pkcs11 import Attribute, KeyType, Mechanism, SecretKey, Session
+from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass, SecretKey, Session
 
 from aris.hashing import (
     _length_prefixed_material,
@@ -141,6 +141,37 @@ def generate_consortium_key(session: Session, label: str = DEFAULT_KEY_LABEL) ->
             Attribute.EXTRACTABLE: False,
         },
     )
+
+
+def import_consortium_key(
+    session: Session, raw_key: bytes, label: str = DEFAULT_KEY_LABEL
+) -> SecretKey:
+    """Import the consortium's shared root key into this token -- the key
+    ceremony step that lets every member bank hold the *same* key.
+
+    ``generate_consortium_key`` makes a fresh random key per token, so two
+    banks provisioned that way can never derive matching risk_ids: every
+    cross-bank lookup misses, and a miss resolves to allow. Importing one
+    ceremony key into each bank's token is what makes HSM mode a consortium
+    scheme at all; it derives the same ids as ``aris.hashing`` under the same
+    key bytes. Once imported the key is sensitive and non-extractable like a
+    generated one -- the raw bytes must then be destroyed outside the token.
+    """
+    if len(raw_key) * 8 != _HMAC_KEY_BITS:
+        raise ValueError(f"consortium key must be {_HMAC_KEY_BITS // 8} bytes, got {len(raw_key)}")
+    session.create_object(
+        {
+            Attribute.CLASS: ObjectClass.SECRET_KEY,
+            Attribute.KEY_TYPE: KeyType.GENERIC_SECRET,
+            Attribute.VALUE: raw_key,
+            Attribute.LABEL: label,
+            Attribute.TOKEN: True,
+            Attribute.SIGN: True,
+            Attribute.SENSITIVE: True,
+            Attribute.EXTRACTABLE: False,
+        }
+    )
+    return get_consortium_key(session, label)
 
 
 def get_consortium_key(session: Session, label: str = DEFAULT_KEY_LABEL) -> SecretKey:

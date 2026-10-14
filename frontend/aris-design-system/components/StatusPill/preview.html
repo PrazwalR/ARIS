@@ -1,0 +1,16 @@
+<!-- @dsCard group="Status" height=72 subtitle="BankBot decisions" -->
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>StatusPill — preview</title></head>
+<body>
+<div id="root" class="ar-row"></div>
+<script>
+  var A = window.Aris, h = React.createElement;
+  ReactDOM.createRoot(document.getElementById('root')).render(h(React.Fragment, null,
+    h(A.StatusPill, { decision: 'allow' }),
+    h(A.StatusPill, { decision: 'stepup' }),
+    h(A.StatusPill, { decision: 'block' }),
+    h(A.StatusPill, { decision: 'block', size: 'lg' }, 'Blocked')));
+</script>
+</body>
+</html>

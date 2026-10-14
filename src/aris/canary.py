@@ -13,12 +13,16 @@ SS3.2 exists to close.
 
 from __future__ import annotations
 
-from typing import Final
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Final
 
 from aris.attestation import Publisher
 from aris.bus import RiskBus
-from aris.hashing import current_epoch, risk_id_for_account
+from aris.hashing import EPOCH_SECONDS, current_epoch, risk_id_for_account
 from aris.schema import LookupStatus, RiskSignal
+
+if TYPE_CHECKING:
+    from aris.risk_id import RiskIdDeriver
 
 # Reserved, never a real account: CANARY_IFSC/CANARY_ACCOUNT exist only to give
 # every node a shared, fixed input to derive and check against, independent of
@@ -30,14 +34,28 @@ _CANARY_REASON_CODE: Final = "system_canary"
 _CANARY_MODEL_VERSION: Final = "aris-canary"
 
 
-def canary_risk_id(epoch: int, key: bytes | None = None) -> str:
-    """The risk_id a canary for ``epoch`` derives to, under ``key`` (default:
-    ``load_salt()``, via ``risk_id_for_account``)."""
+def canary_risk_id(
+    epoch: int, key: bytes | None = None, risk_ids: RiskIdDeriver | None = None
+) -> str:
+    """The risk_id a canary for ``epoch`` derives to.
+
+    Pass ``risk_ids`` -- the deployment's own scheme (HSM, OPRF) -- so the
+    canary checks the derivation actually in use. Without it this derives via
+    ``risk_id_for_account`` under ``key`` (default ``load_salt()``), which in
+    HSM or OPRF mode would check a key those modes never use and report
+    agreement while every real lookup missed.
+    """
+    if risk_ids is not None:
+        at = datetime.fromtimestamp(epoch * EPOCH_SECONDS, tz=timezone.utc)
+        return risk_ids.candidates(CANARY_IFSC, CANARY_ACCOUNT, at)[0]
     return risk_id_for_account(CANARY_IFSC, CANARY_ACCOUNT, key, epoch=epoch)
 
 
 def publish_epoch_canary(
-    bus: RiskBus, publisher: Publisher, epoch: int | None = None
+    bus: RiskBus,
+    publisher: Publisher,
+    epoch: int | None = None,
+    risk_ids: RiskIdDeriver | None = None,
 ) -> RiskSignal:
     """Publish a reserved marker signal for ``epoch`` (default: the current
     one), so peers can check their own key/epoch derivation against a
@@ -45,7 +63,7 @@ def publish_epoch_canary(
     """
     epoch = epoch if epoch is not None else current_epoch()
     signal = RiskSignal(
-        risk_id=canary_risk_id(epoch),
+        risk_id=canary_risk_id(epoch, risk_ids=risk_ids),
         # 100, not 0: InMemoryRiskBus evicts the lowest max(risk_score) entry
         # first under global capacity pressure (see bus.py's _least_valuable),
         # so a score-0 "informational" canary would be the first thing
@@ -64,7 +82,12 @@ def publish_epoch_canary(
     return signal
 
 
-def check_epoch_canary(bus: RiskBus, epoch: int | None = None, key: bytes | None = None) -> bool:
+def check_epoch_canary(
+    bus: RiskBus,
+    epoch: int | None = None,
+    key: bytes | None = None,
+    risk_ids: RiskIdDeriver | None = None,
+) -> bool:
     """Return whether this node's key/epoch derivation matches what is
     already on the bus for ``epoch`` (default: the current one).
 
@@ -77,5 +100,5 @@ def check_epoch_canary(bus: RiskBus, epoch: int | None = None, key: bytes | None
     past the grace period a fresh epoch needs for someone to publish into it.
     """
     epoch = epoch if epoch is not None else current_epoch()
-    result = bus.lookup(canary_risk_id(epoch, key=key))
+    result = bus.lookup(canary_risk_id(epoch, key=key, risk_ids=risk_ids))
     return result.status is LookupStatus.FOUND

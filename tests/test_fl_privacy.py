@@ -3,7 +3,7 @@ import math
 import numpy as np
 import pytest
 
-from aris.fl.model import get_weights, new_model, train_local, train_local_dp
+from aris.fl.model import _pos_weight, get_weights, new_model, train_local, train_local_dp
 from aris.fl.privacy import (
     clip_and_noise_gradients,
     compose_rho,
@@ -208,7 +208,39 @@ def test_train_local_dp_matches_train_local_when_unclipped_and_noiseless():
         max_grad_norm=1e6,
         noise_multiplier=0.0,
         seed=0,
+        # Same class weight plain training derives; DP-SGD itself never
+        # derives it from labels (that would break its sensitivity bound).
+        pos_weight=_pos_weight(y),
     )
 
     for w_plain, w_dp in zip(get_weights(m_plain), get_weights(m_dp), strict=True):
         np.testing.assert_allclose(w_plain, w_dp, atol=1e-4)
+
+
+def test_dp_class_weight_never_depends_on_the_labels(monkeypatch):
+    """A class weight derived from the shard's labels lets one example change
+    every other positive's clipped gradient, so its influence on a step
+    exceeds max_grad_norm and epsilon is understated. DP-SGD must only ever
+    use the public weight it is given."""
+    import aris.fl.model as model_mod
+
+    def forbidden(_y):
+        raise AssertionError("DP-SGD derived a class weight from private labels")
+
+    monkeypatch.setattr(model_mod, "_pos_weight", forbidden)
+    rng = np.random.default_rng(3)
+    x = rng.normal(size=(32, 5)).astype(np.float32)
+    y = (rng.random(32) < 0.2).astype(np.float32)
+    m = new_model(5, hidden=4, seed=1)
+    train_local_dp(
+        m,
+        x,
+        y,
+        epochs=1,
+        batch_size=8,
+        lr=0.1,
+        max_grad_norm=1.0,
+        noise_multiplier=1.0,
+        seed=0,
+        pos_weight=3.0,
+    )

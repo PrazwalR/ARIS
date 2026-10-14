@@ -9,8 +9,9 @@ deployment choice instead of something each call site picks for itself.
 - ``HmacRiskIdDeriver``: HMAC under the consortium key from ``ARIS_SALT``,
   daily epoch subkeys. The default.
 - ``HsmRiskIdDeriver``: the same derivation and output, but the root key is a
-  non-extractable PKCS#11 object (SS3.6). Interoperable with the HMAC scheme
-  when the token holds the same key material.
+  non-extractable PKCS#11 object (SS3.6). Every bank's token must hold the
+  same ceremony key (``aris.hsm.import_consortium_key``); with it, ids match
+  the HMAC scheme's under the same key bytes.
 - ``OprfRiskIdDeriver``: blind evaluation by the consortium authority (SS3.1).
   A bank cannot compute an id offline at all. Ids do not rotate with epochs;
   rotating the authority's key is what rotates them.

@@ -1,0 +1,17 @@
+<!-- @dsCard group="Surfaces" height=280 subtitle="Day-cycle gradient, clouds, bank mesh" -->
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>SkyBackground — preview</title></head>
+<body>
+<div id="root"></div>
+<script>
+  var A = window.Aris, h = React.createElement;
+  ReactDOM.createRoot(document.getElementById('root')).render(
+    h(A.SkyBackground, { mesh: true, minHeight: 260 },
+      h('div', { style: { padding: 32, maxWidth: 560 } },
+        h('div', { className: 'ar-scrim' },
+          h('p', { className: 'ar-card-eyebrow' }, 'Federated fraud intelligence'),
+          h('h2', { className: 'h2', style: { margin: 0, fontFamily: 'var(--font-display)' } }, 'Banks that warn each other \u2014 without sharing a single customer record.')))));
+</script>
+</body>
+</html>

@@ -56,7 +56,7 @@ Shipped: Flower `NumPyClient` per bank, Flower FedAvg aggregator, ULB + syntheti
 ### M3 Shared Risk-Signal Bus (Kafka) — **done**
 
 Shipped: `KafkaRiskBus` (same `RiskBus` interface `InMemoryRiskBus` implements), a
-compacted `risk-signals` topic keyed `risk_id:bank`, Karapace schema registry over
+`risk-signals` topic keyed `risk_id:bank` (time-based retention, not compaction -- SECURITY.md §5), Karapace schema registry over
 plain REST (no `confluent-kafka`), `docker-compose.yml` for local dev.
 
 | Person | Tasks |

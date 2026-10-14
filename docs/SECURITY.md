@@ -265,7 +265,7 @@ claimed as a hardware-equivalent guarantee. **Wired in** through the same
 `aris/risk_id.py` interface as §3.1: `HsmRiskIdDeriver` derives under the token-resident
 key, `ARIS_API_RISK_ID_MODE=hsm` makes the BankBot API open the token (from
 `ARIS_HSM_MODULE`/`ARIS_HSM_TOKEN_LABEL`/`ARIS_HSM_PIN`) for the process's lifetime, and
-startup fails closed when the key is not provisioned. `tests/test_hsm.py` checks a flag
+startup fails closed when the key is not provisioned. `import_consortium_key` provisions the same ceremony key into every bank's token, so HSM-mode banks derive matching ids (identical to HMAC mode under the same key bytes); see §5. `tests/test_hsm.py` checks a flag
 published under the HSM key blocks a transfer, against a real SoftHSM2 token.
 
 ### 3.7 The audit log is a plaintext reverse table — *medium* — done
@@ -332,7 +332,7 @@ are not a party to) and can read the Schema Registry's subjects freely.
 A real deployment needs both layers, not one instead of the other:
 
 - **mTLS** on the broker listener, so only certificate-holding members can connect at
-  all — this is what keeps an unauthenticated party from reading the compacted topic's
+  all — this is what keeps an unauthenticated party from reading the topic's
   full history in the first place, something the signature check cannot prevent since
   it only governs whether a *write* gets accepted, not who can *read*.
 - **Per-principal ACLs** (`kafka-acls.sh --add --allow-principal User:BANK-B --operation
@@ -365,7 +365,7 @@ a *valid* certificate but no Write ACL (`BANK-EVIL` — the broker's authorizer,
 TLS handshake, is what rejects it — confirmed by first checking the raw handshake
 alone succeeds, then that the Kafka-protocol-level operation still fails); an
 unauthorized bank can still *read* (the Read ACL is granted broadly — SS3.8 restricts
-who may publish, not who may consume the compacted topic to build a local view); and
+who may publish, not who may consume the topic to build a local view); and
 `ensure_topic` still succeeds for a bank holding no Create permission at all, once a
 real bug this surfaced was fixed — `create_topics` against an *already-existing* topic
 raises `TopicAuthorizationFailedError`, not `TopicAlreadyExistsError`, when the caller
@@ -402,7 +402,36 @@ shared secret over plain HTTP rather than §3.8's mTLS, and §3.6 is verified ag
 SoftHSM2, a real PKCS#11 software token, not real HSM hardware this project has no
 access to.
 
-## 5. Reporting
+## 5. Adversarial review, October 2026
+
+Three independent bug-bounty passes (crypto and identity; the decision path,
+APIs and bus; the ML pipeline) plus three test-writing passes (ML-to-backend
+compatibility, live multi-process workflows, HTTP fuzzing) were run against
+this codebase. Every finding below was reproduced before it was fixed, and each
+has a regression test in `tests/test_bug_bounty_regressions.py` (or the file
+named) that failed on the code as it was.
+
+| Finding | Severity | Fix |
+| --- | --- | --- |
+| Published ULB metrics came from a truncated download (89,900 of 284,807 rows; ~3x fraud-enriched) that the loader silently accepted | high | Atomic download; the loader refuses any file that is not the complete published dataset (row and fraud counts) or has unlabelled rows. All ULB numbers re-measured on the full file. |
+| A previous-epoch lookup reporting `UNAVAILABLE` resolved to `NOT_FOUND` (allow) | high | Any unavailable candidate with no `FOUND` is now "unknown" and fails closed (step-up). |
+| A reused `transfer_id` with a different body returned the earlier decision -- a new receiver or amount riding an old ALLOW | high | The idempotency cache stores a fingerprint of the whole request; a mismatch is `TransferIdConflict` (HTTP 409). Reuse after cache eviction is refused rather than decided twice. |
+| Kafka log compaction let any member with Write erase a peer's signed flag by appending a record under its key | high | The topic uses `cleanup.policy=delete` with retention past the longest signal TTL; `ensure_topic` refuses an existing compacted topic (`scripts/migrate_topic_retention.py` migrates one). |
+| One member's high-score, zero-confidence signal masked a peer's confident block; a score-0 signal counted as corroboration | medium | The bus returns every bank's own live signal; a block needs enough banks whose own signal clears both `block_at` and `min_confidence_to_block`. |
+| Concurrent requests with one `transfer_id` got contradictory decisions; concurrent records and reads corrupted the audit log | medium | In-flight claim per `transfer_id`; the audit sink is locked and refuses duplicate references. |
+| DP-SGD's class weight was derived from the client's private labels, so one example changed every other positive's clipped gradient and epsilon was understated | medium | Under DP the class weight is a public hyperparameter (`TrainConfig.dp_pos_weight`). Sweep figures re-measured. |
+| HSM mode could not share a key between banks, so cross-bank lookups always missed; the epoch canary checked a key HSM mode never uses | medium | `import_consortium_key` (key-ceremony import, still non-extractable); the canary takes the deployment's `RiskIdDeriver`. |
+| Confidence quantisation rounded to nearest, so a stated 0.48 became 0.50 and cleared the 0.5 block floor | medium | Confidence is floored to its bucket. |
+| `python -m aris.api` silently fell back to the public development key when `ARIS_SALT` was unset | medium | It refuses to start in HMAC mode unless `ARIS_DEV_MODE=1` is set explicitly. |
+| The model scorer turned NaN/inf/overflowing input into risk score 0, and loaded checkpoints of the wrong shape | medium | `UnscorableInput` for non-finite input or output; shape-checked checkpoints. Checkpoints are now saved without pickle (loading one could execute code). |
+| JSON `NaN`/`Infinity`, deep nesting, NUL bytes or over-long paths produced HTTP 500s; `true` was accepted as a 1-paisa amount | low | Shared error handlers return 422/400 without echoing input (which also stops validation errors reflecting account numbers); amounts are strict integers; the static route tolerates unrepresentable paths. |
+| Graph features were standardised using holdout rows; `fpr_at_recall` depended on row order under tied scores | low | Standardisation fits on the training time window only; the metric is computed over ROC thresholds. |
+
+Not fixed, stated plainly: the showcase server's `/demo` endpoints
+(`aris.demo.server`) are unauthenticated by design and bind to `127.0.0.1`;
+they exist to drive a local demonstration and must never be exposed beyond it.
+
+## 6. Reporting
 
 This is student research, not a deployed system. Security issues: open an issue, or
 contact the maintainers listed in [`TEAM.md`](TEAM.md).

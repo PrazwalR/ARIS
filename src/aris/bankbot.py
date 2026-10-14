@@ -8,6 +8,7 @@ every decision -- including the ones that allow the transfer.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import logging
 import threading
 import uuid
@@ -72,7 +73,8 @@ class TransferRequest(BaseModel):
     # Money is held in integer minor units (paise). A float amount cannot
     # represent a decimal value exactly and silently accepts NaN and infinity,
     # neither of which should ever reach a threshold comparison.
-    amount_minor: int = Field(gt=0, le=10**15)
+    # strict: JSON `true` must not become a 1-paisa transfer.
+    amount_minor: int = Field(gt=0, le=10**15, strict=True)
     currency: str = Field(default="INR", pattern=r"^[A-Z]{3}$")
 
     # Idempotency key. Supplied by the caller when it has one so a retried
@@ -93,6 +95,15 @@ class TransferRequest(BaseModel):
         if not (stripped.isascii() and stripped.isprintable()):
             raise ValueError("value must be printable ASCII")
         return stripped
+
+    @field_validator("receiver_account")
+    @classmethod
+    def _check_receiver_account(cls, value: str) -> str:
+        # Reject here what risk_id derivation would reject later, so a
+        # malformed account is a 422 at the edge rather than an exception in
+        # the middle of a decision.
+        normalize_account(value)
+        return value
 
     @field_validator("receiver_ifsc")
     @classmethod
@@ -116,6 +127,18 @@ class TransferRequest(BaseModel):
     @property
     def amount_major(self) -> Decimal:
         return Decimal(self.amount_minor) / MINOR_UNITS_PER_MAJOR
+
+
+class TransferIdConflict(Exception):
+    """A ``transfer_id`` already decided for a *different* request.
+
+    Returning the earlier decision would let a reused id carry a fresh,
+    unchecked payment (a new receiver or amount) under an old ALLOW.
+    """
+
+
+class DuplicateAuditRef(Exception):
+    """An audit sink was asked to record a reference it already holds."""
 
 
 class AuditRecord(BaseModel):
@@ -178,6 +201,9 @@ class InMemoryAuditLog(AuditSink):
     running inside this trusted process -- tests, the demo script) decrypts
     without that check, matching ``get()``'s own docstring: it, not ``entries``,
     is the analyst/investigator boundary. See docs/SECURITY.md SS3.7.
+
+    Thread-safe: FastAPI runs sync endpoints on a thread pool, so records,
+    reads and retention sweeps interleave.
     """
 
     def __init__(
@@ -205,6 +231,7 @@ class InMemoryAuditLog(AuditSink):
         self._decided_at: dict[str, datetime] = {}
         self._access_log = AuditAccessLog(capacity=access_log_capacity)
         self._dropped = 0
+        self._lock = threading.RLock()
 
     def _purge_expired(self) -> None:
         if self._retention is None:
@@ -218,68 +245,76 @@ class InMemoryAuditLog(AuditSink):
                 self._order.remove(ref)
 
     def record(self, entry: AuditRecord) -> None:
-        self._purge_expired()
-        # Losing the record of a blocked fraud attempt to a flood of cheap
-        # allowed probes is evidence destruction, so a drop is always counted and
-        # always surfaced. A durable sink must not drop at all.
-        evicted_ref: str | None = None
-        if len(self._order) == self._order.maxlen:
-            self._dropped += 1
-            evicted_ref = self._order[0]  # deque.append() below silently pops this
-            logger.warning(
-                "audit log at capacity; discarded oldest record (%d dropped total)",
-                self._dropped,
-            )
-        self._order.append(entry.transfer_id)
-        if evicted_ref is not None:
-            self._blobs.pop(evicted_ref, None)
-            self._decided_at.pop(evicted_ref, None)
-        self._blobs[entry.transfer_id] = encrypt_record(
-            self._key, entry.transfer_id, entry.model_dump_json().encode()
-        )
-        self._decided_at[entry.transfer_id] = entry.decided_at
+        blob = encrypt_record(self._key, entry.transfer_id, entry.model_dump_json().encode())
+        with self._lock:
+            self._purge_expired()
+            if entry.transfer_id in self._blobs:
+                # Two records under one reference would be contradictory
+                # evidence, and would desynchronise eviction order from the store.
+                raise DuplicateAuditRef(entry.transfer_id)
+            # Losing the record of a blocked fraud attempt to a flood of cheap
+            # allowed probes is evidence destruction, so a drop is always counted
+            # and always surfaced. A durable sink must not drop at all.
+            if len(self._order) == self._order.maxlen:
+                self._dropped += 1
+                evicted_ref = self._order.popleft()
+                self._blobs.pop(evicted_ref, None)
+                self._decided_at.pop(evicted_ref, None)
+                logger.warning(
+                    "audit log at capacity; discarded oldest record (%d dropped total)",
+                    self._dropped,
+                )
+            self._blobs[entry.transfer_id] = blob
+            self._decided_at[entry.transfer_id] = entry.decided_at
+            self._order.append(entry.transfer_id)
 
     def get(self, audit_ref: str, investigator: InvestigatorCredential) -> AuditRecord | None:
-        self._purge_expired()
-        blob = self._blobs.get(audit_ref)
-        record = (
-            AuditRecord.model_validate_json(decrypt_record(self._key, audit_ref, blob))
-            if blob is not None
-            else None
-        )
-        self._access_log.record(
-            AuditAccessEvent(
-                investigator_id=investigator.investigator_id,
-                reason=investigator.reason,
-                audit_ref=audit_ref,
-                found=record is not None,
-                accessed_at=self._now(),
+        with self._lock:
+            self._purge_expired()
+            blob = self._blobs.get(audit_ref)
+            record = (
+                AuditRecord.model_validate_json(decrypt_record(self._key, audit_ref, blob))
+                if blob is not None
+                else None
             )
-        )
-        return record
+            self._access_log.record(
+                AuditAccessEvent(
+                    investigator_id=investigator.investigator_id,
+                    reason=investigator.reason,
+                    audit_ref=audit_ref,
+                    found=record is not None,
+                    accessed_at=self._now(),
+                )
+            )
+            return record
 
     @property
     def dropped(self) -> int:
         """How many records this sink has discarded. Must be zero in production."""
-        return self._dropped
+        with self._lock:
+            return self._dropped
 
     @property
     def entries(self) -> tuple[AuditRecord, ...]:
-        self._purge_expired()
+        with self._lock:
+            self._purge_expired()
+            snapshot = [(ref, self._blobs[ref]) for ref in self._order]
         return tuple(
-            AuditRecord.model_validate_json(decrypt_record(self._key, ref, self._blobs[ref]))
-            for ref in self._order
+            AuditRecord.model_validate_json(decrypt_record(self._key, ref, blob))
+            for ref, blob in snapshot
         )
 
     @property
     def access_log(self) -> tuple[AuditAccessEvent, ...]:
         """Every ``get()`` call this sink has served, found or not -- see
         docs/SECURITY.md SS3.7."""
-        return self._access_log.entries
+        with self._lock:
+            return self._access_log.entries
 
     def __len__(self) -> int:
-        self._purge_expired()
-        return len(self._order)
+        with self._lock:
+            self._purge_expired()
+            return len(self._order)
 
 
 class BankBotDecision(BaseModel):
@@ -331,15 +366,18 @@ class BankBot:
         self.audit = audit if audit is not None else InMemoryAuditLog()
         # Must match whatever scheme publishers sign under -- see aris.risk_id.
         self.risk_ids: RiskIdDeriver = risk_ids if risk_ids is not None else HmacRiskIdDeriver()
-        # transfer_id -> the decision already taken for it.
-        self._decided: OrderedDict[str, BankBotDecision] = OrderedDict()
+        # transfer_id -> (fingerprint of the request, the decision taken).
+        self._decided: OrderedDict[str, tuple[str, BankBotDecision]] = OrderedDict()
+        # transfer_ids being decided right now; a concurrent duplicate waits
+        # for the first decision instead of racing it to a second one.
+        self._inflight: dict[str, threading.Event] = {}
         self._replay_cache_size = replay_cache_size
         self._lock = threading.Lock()
         self._now = now
 
-    def _remember(self, transfer_id: str, decision: BankBotDecision) -> None:
+    def _remember(self, transfer_id: str, fingerprint: str, decision: BankBotDecision) -> None:
         with self._lock:
-            self._decided[transfer_id] = decision
+            self._decided[transfer_id] = (fingerprint, decision)
             while len(self._decided) > self._replay_cache_size:
                 self._decided.popitem(last=False)
 
@@ -373,6 +411,7 @@ class BankBot:
             return RISK_ID_UNAVAILABLE, None
 
         primary_result: LookupResult | None = None
+        any_unavailable = False
         for i, candidate_risk_id in enumerate(candidates):
             try:
                 result = self.bus.lookup(candidate_risk_id)
@@ -390,6 +429,13 @@ class BankBot:
                 primary_result = result
             if result.status is LookupStatus.FOUND:
                 return candidate_risk_id, result
+            if result.status is LookupStatus.UNAVAILABLE:
+                any_unavailable = True
+        if any_unavailable:
+            # Not found where we could look, but some candidate (e.g.
+            # yesterday's epoch, a different Kafka bucket) could not be
+            # checked: that is "unknown", never "clean".
+            return candidates[0], None
         return candidates[0], primary_result
 
     def pre_transaction(self, req: TransferRequest) -> BankBotDecision:
@@ -401,12 +447,33 @@ class BankBot:
         leaving two contradictory records under one key and nothing to say which
         one governed the money.
         """
-        with self._lock:
-            seen = self._decided.get(req.transfer_id)
-        if seen is not None:
-            logger.info("transfer=%s replayed; returning recorded decision", req.transfer_id)
-            return seen
+        fingerprint = hashlib.sha256(req.model_dump_json().encode()).hexdigest()
+        while True:
+            with self._lock:
+                seen = self._decided.get(req.transfer_id)
+                if seen is not None:
+                    seen_fingerprint, decision = seen
+                    if seen_fingerprint != fingerprint:
+                        raise TransferIdConflict(req.transfer_id)
+                    logger.info(
+                        "transfer=%s replayed; returning recorded decision", req.transfer_id
+                    )
+                    return decision
+                pending = self._inflight.get(req.transfer_id)
+                if pending is None:
+                    self._inflight[req.transfer_id] = threading.Event()
+                    break
+            pending.wait()
 
+        try:
+            outcome = self._decide(req)
+            self._remember(req.transfer_id, fingerprint, outcome)
+            return outcome
+        finally:
+            with self._lock:
+                self._inflight.pop(req.transfer_id).set()
+
+    def _decide(self, req: TransferRequest) -> BankBotDecision:
         risk_id, result = self._lookup_receiver(
             req.receiver_ifsc, req.receiver_account, req.transfer_id
         )
@@ -415,10 +482,25 @@ class BankBot:
             status: LookupStatus = LookupStatus.UNAVAILABLE
             signal = None
             contributing: tuple[str, ...] = ()
+            blocking: int | None = None
         else:
             status = result.status
             signal = result.signal
             contributing = result.contributing_banks
+            # Judge each bank's own signal; None when the bus did not report
+            # per-bank signals, so the single-signal policy form applies.
+            blocking = (
+                len(
+                    {
+                        s.source_bank_id
+                        for s in result.signals
+                        if s.risk_score >= self.policy.block_at
+                        and s.confidence >= self.policy.min_confidence_to_block
+                    }
+                )
+                if result.signals
+                else None
+            )
 
         try:
             decision = apply_policy(
@@ -428,6 +510,7 @@ class BankBot:
                 self.policy,
                 confidence=signal.confidence if signal else None,
                 contributing_banks=len(contributing),
+                blocking_banks=blocking,
             )
         except Exception:
             # Malformed bus data must not escape into the transfer path, and it
@@ -454,7 +537,13 @@ class BankBot:
             policy=self.policy,
             decided_at=self._now(),
         )
-        self.audit.record(entry)
+        try:
+            self.audit.record(entry)
+        except DuplicateAuditRef as exc:
+            # The id was decided before and has since aged out of the replay
+            # cache; a second decision under it would be a second, conflicting
+            # record, so refuse rather than decide twice.
+            raise TransferIdConflict(req.transfer_id) from exc
 
         logger.info(
             "transfer=%s bank=%s decision=%s status=%s risk_id=%s",
@@ -464,10 +553,8 @@ class BankBot:
             status.value if isinstance(status, LookupStatus) else status,
             risk_id,
         )
-        outcome = BankBotDecision(
+        return BankBotDecision(
             decision=decision,
             user_message=_user_message(decision),
             audit_ref=req.transfer_id,
         )
-        self._remember(req.transfer_id, outcome)
-        return outcome

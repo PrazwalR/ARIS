@@ -152,6 +152,7 @@ def generate_multi_bank_transaction_stream(
     num_transactions: int = 6000,
     fraud_ratio: float = 0.05,
     seed: int = 42,
+    fit_fraction: float = 0.8,
 ) -> tuple[list[TransactionRecord], npt.NDArray[np.float32], npt.NDArray[np.int64], list[str]]:
     """Generates a realistic multi-bank transaction stream with cross-bank mule rings.
 
@@ -230,9 +231,15 @@ def generate_multi_bank_transaction_stream(
         labels_list.append(rec.is_fraud)
 
     x = np.vstack(features_list)
-    # Standardize features for robust neural network convergence
-    means = np.mean(x, axis=0)
-    stds = np.std(x, axis=0) + 1e-5
+    # Standardize for stable training, fitting the statistics on the earliest
+    # `fit_fraction` of the stream by time only. The holdout is the latest
+    # slice (aris.fl.partition.holdout_split with a time column; 0.8 matches
+    # TrainConfig's default 0.2 holdout), so fitting on the whole stream would
+    # let holdout rows shape how training rows are scaled.
+    order = np.argsort([r.timestamp for r in records], kind="stable")
+    fit_rows = order[: max(1, int(len(order) * fit_fraction))]
+    means = np.mean(x[fit_rows], axis=0)
+    stds = np.std(x[fit_rows], axis=0) + 1e-5
     x = ((x - means) / stds).astype(np.float32)
     y = np.array(labels_list, dtype=np.int64)
 

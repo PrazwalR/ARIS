@@ -1,0 +1,20 @@
+<!-- @dsCard group="Charts" height=330 subtitle="Local banks thin, global bold" -->
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>RocChart — preview</title></head>
+<body>
+<div id="root" style="padding:16px;max-width:460px"></div>
+<script>
+  var A = window.Aris, h = React.createElement;
+  function curve(k) { var p = []; for (var i = 0; i <= 20; i++) { var x = i / 20; p.push([x, Math.pow(x, 1 / k)]); } return p; }
+  ReactDOM.createRoot(document.getElementById('root')).render(h(A.RocChart, {
+    title: 'ROC — illustrative shapes', ariaLabel: 'Illustrative ROC chart: five thin local-bank curves below one bold global curve.',
+    series: [
+      { label: 'Bank A', points: curve(1.25), labelY: 0.92 }, { label: 'Bank B', points: curve(1.45), labelY: 0.85 },
+      { label: 'Bank C', points: curve(1.2), labelY: 0.78 }, { label: 'Bank D', points: curve(1.15), labelY: 0.71 },
+      { label: 'Bank E', points: curve(1.4), labelY: 0.64 },
+      { label: 'Global FedAvg', points: curve(2.2), emphasis: true, labelY: 1.0 }
+    ] }));
+</script>
+</body>
+</html>

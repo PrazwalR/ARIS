@@ -18,6 +18,7 @@ from typing import Annotated
 
 from fastapi import FastAPI, Header, HTTPException, Request
 
+from aris.api.errors import install_error_handlers
 from aris import __version__
 from aris.api.config import ApiSettings, load_settings
 from aris.audit_security import InvestigatorCredential
@@ -27,12 +28,20 @@ from aris.bankbot import (
     BankBot,
     BankBotDecision,
     InMemoryAuditLog,
+    TransferIdConflict,
     TransferRequest,
 )
 from aris.bus import RiskBus
 from aris.risk_id import RiskIdDeriver
 from aris.schema import Decision
 from pydantic import BaseModel, ConfigDict, ValidationError
+
+
+def _secret_equal(given: str, expected: str) -> bool:
+    """Constant-time comparison that also accepts non-ASCII input: headers
+    arrive latin-1 decoded, and hmac.compare_digest raises TypeError on a
+    non-ASCII str -- a 500 an unauthenticated caller could trigger at will."""
+    return hmac.compare_digest(given.encode("utf-8"), expected.encode("utf-8"))
 
 
 class TransferResponse(BaseModel):
@@ -72,6 +81,7 @@ def create_app(
     bot = BankBot(bus, policy=settings.policy, audit=audit, risk_ids=risk_ids)
 
     app = FastAPI(title="ARIS BankBot API", version=__version__)
+    install_error_handlers(app)
     # Per-instance state, not module-level: create_app() can be called more
     # than once (tests do, repeatedly) and each app must own its own bot/audit
     # sink/settings. Routes reach these through `request.app.state`, not a
@@ -94,7 +104,13 @@ def create_app(
     @app.post("/transfers", response_model=TransferResponse)
     def create_transfer(req: TransferRequest, request: Request) -> TransferResponse:
         bot: BankBot = request.app.state.bot
-        return TransferResponse.from_decision(bot.pre_transaction(req))
+        try:
+            return TransferResponse.from_decision(bot.pre_transaction(req))
+        except TransferIdConflict as exc:
+            raise HTTPException(
+                status_code=409,
+                detail="transfer_id was already used for a different transfer",
+            ) from exc
 
     @app.get("/audit/{audit_ref}", response_model=AuditRecord)
     def get_audit_record(
@@ -114,7 +130,7 @@ def create_app(
         if x_investigator_id is None or x_investigator_key is None:
             raise HTTPException(status_code=401, detail="missing investigator credentials")
         expected_key = api_settings.investigators.get(x_investigator_id)
-        if expected_key is None or not hmac.compare_digest(x_investigator_key, expected_key):
+        if expected_key is None or not _secret_equal(x_investigator_key, expected_key):
             raise HTTPException(status_code=401, detail="unknown investigator or invalid key")
         try:
             # A named identity with no stated reason is still just an admin

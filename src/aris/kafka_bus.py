@@ -4,7 +4,7 @@ a real broker instead of one process's memory.
 Architecture: ``publish()`` verifies and applies the signal to a *local*
 materialized view -- an ``InMemoryRiskBus``, reusing every M0 admission, replay,
 and quota rule rather than reimplementing it -- then produces it to the
-compacted ``risk-signals`` topic. ``lookup()`` only ever reads the local view,
+``risk-signals`` topic. ``lookup()`` only ever reads the local view,
 so an already-warm bucket never blocks on the network.
 
 Partitioned by ``risk_id`` prefix (docs/SECURITY.md SS3.4), not eagerly
@@ -22,11 +22,16 @@ a bounded, synchronous catch-up of one partition (~hundreds of records, not the
 whole topic) instead of being instant against an already-fully-warm view --
 the price of that other bank's visibility bound.
 
-Kafka key is ``f"{risk_id}:{source_bank_id}"``, not ``risk_id`` alone. Log
-compaction keeps only the latest value per key, and per-bank tracking
-(``min_banks_to_block``, ``contributing_banks``) needs each bank's contribution
-to survive compaction independently -- a bare ``risk_id`` key would let one
-bank's signal silently evict a different bank's on the next compaction pass.
+Retention, not compaction. The topic uses ``cleanup.policy=delete`` with a
+retention longer than the longest signal TTL. Under compaction, Kafka keeps
+only the latest record per key, and keys are visible to every reader -- so any
+member holding Write could append a garbage or null record under a peer's
+key (``f"{risk_id}:{source_bank_id}"``) and have the broker itself delete
+that peer's signed flag at the next compaction. The consumer rejects the
+forgery, but the original would already be gone, and the account would read
+NOT_FOUND (allow). With time-based retention a forged record is just one more
+record that fails verification; the signed original stays until it has
+expired on its own TTL anyway.
 
 Known limitation: applying a signal to the local view and producing it to Kafka
 are two separate steps, not one transaction. If the local apply succeeds but the
@@ -47,7 +52,7 @@ from dataclasses import dataclass
 from typing import Any, Final
 
 from kafka import KafkaConsumer, KafkaProducer, TopicPartition
-from kafka.admin import KafkaAdminClient, NewTopic
+from kafka.admin import ConfigResource, ConfigResourceType, KafkaAdminClient, NewTopic
 from kafka.errors import KafkaError, TopicAlreadyExistsError, TopicAuthorizationFailedError
 from kafka.serializer import Deserializer, Serializer
 
@@ -60,7 +65,7 @@ from aris.bus import (
     PublishOutcome,
     RiskBus,
 )
-from aris.schema import LookupStatus, RiskSignal
+from aris.schema import MAX_TTL_HOURS, LookupStatus, RiskSignal
 from aris.schema_registry import SchemaRegistryClient, decode, encode
 
 logger = logging.getLogger(__name__)
@@ -136,6 +141,41 @@ class KafkaTlsConfig:
         }
 
 
+# Every live signal's record must still be on the log: retention outlasts the
+# longest TTL a signal may carry, with a day of margin.
+TOPIC_RETENTION_MS: Final = (MAX_TTL_HOURS + 24) * 3600 * 1000
+TOPIC_CONFIGS: Final = {"cleanup.policy": "delete", "retention.ms": str(TOPIC_RETENTION_MS)}
+
+
+class UnsafeTopicConfig(RuntimeError):
+    """The risk-signals topic exists with a configuration that lets a member
+    delete another member's signals (compaction) or drops live ones early."""
+
+
+def _check_topic_config(admin: KafkaAdminClient, topic: str) -> None:
+    try:
+        described = admin.describe_configs([ConfigResource(ConfigResourceType.TOPIC, topic)])
+    except TopicAuthorizationFailedError:
+        # A bank identity without DescribeConfigs cannot check; the operator
+        # who provisioned the topic (scripts/setup_kafka_acls.sh) owns this.
+        logger.warning("cannot read %s config to verify retention policy", topic)
+        return
+    config = described.get("topic", {}).get(topic, {})
+    policy = str(config.get("cleanup.policy", {}).get("value", ""))
+    retention = config.get("retention.ms", {}).get("value")
+    if "compact" in policy:
+        raise UnsafeTopicConfig(
+            f"topic {topic!r} uses cleanup.policy={policy}: any member with Write can "
+            "erase a peer's flag by compaction. Run scripts/migrate_topic_retention.py "
+            "(or set cleanup.policy=delete, retention.ms>=%d)." % TOPIC_RETENTION_MS
+        )
+    if retention is not None and 0 <= int(retention) < TOPIC_RETENTION_MS:
+        raise UnsafeTopicConfig(
+            f"topic {topic!r} has retention.ms={retention}, shorter than the longest "
+            f"signal TTL; live signals would be dropped early (need >= {TOPIC_RETENTION_MS})."
+        )
+
+
 def ensure_topic(
     bootstrap_servers: str,
     topic: str = DEFAULT_TOPIC,
@@ -143,13 +183,10 @@ def ensure_topic(
     replication_factor: int = 1,
     tls: KafkaTlsConfig | None = None,
 ) -> None:
-    """Create the risk-signals topic with log compaction enabled, if it does not
-    already exist. Idempotent -- safe to call from every process on startup.
-
-    Compaction (not the default "delete" cleanup policy new topics get) is what
-    makes this a bounded materialized-view source rather than an ever-growing
-    log: Kafka keeps only the latest record per key, which is exactly what a
-    consumer rebuilding `risk_id:bank -> latest signal` needs.
+    """Create the risk-signals topic with time-based retention (see the module
+    docstring for why not compaction), if it does not already exist, and
+    refuse to run against an existing topic configured unsafely. Idempotent --
+    safe to call from every process on startup.
 
     Verifies partition count on an already-existing topic rather than trusting
     it: `KafkaRiskBus` addresses partitions directly by `bucket_for_risk_id`,
@@ -177,13 +214,14 @@ def ensure_topic(
                         name=topic,
                         num_partitions=num_partitions,
                         replication_factor=replication_factor,
-                        topic_configs={"cleanup.policy": "compact"},
+                        topic_configs=dict(TOPIC_CONFIGS),
                     )
                 ]
             )
             return
         except (TopicAlreadyExistsError, TopicAuthorizationFailedError):
             pass
+        _check_topic_config(admin, topic)
         (described,) = admin.describe_topics([topic])
         actual = len(described["partitions"])
         if actual != num_partitions:

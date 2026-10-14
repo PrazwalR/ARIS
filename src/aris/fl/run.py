@@ -272,6 +272,7 @@ def _federated_train(
             "dp_enabled": cfg.dp_enabled,
             "max_grad_norm": cfg.max_grad_norm,
             "noise_multiplier": cfg.noise_multiplier,
+            "dp_pos_weight": cfg.dp_pos_weight,
             "momentum": cfg.momentum,
         }
         updates: list[tuple[list[npt.NDArray[Any]], int]] = []

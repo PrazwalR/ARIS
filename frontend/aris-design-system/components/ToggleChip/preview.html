@@ -1,0 +1,15 @@
+<!-- @dsCard group="Controls" height=80 subtitle="Privacy and robustness layers" -->
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>ToggleChip — preview</title></head>
+<body>
+<div id="root" class="ar-row"></div>
+<script>
+  var A = window.Aris, h = React.createElement;
+  ReactDOM.createRoot(document.getElementById('root')).render(h(React.Fragment, null,
+    h(A.ToggleChip, { label: 'DP-SGD', hint: '\u03b5 budget', defaultPressed: true }),
+    h(A.ToggleChip, { label: 'Secure Aggregation', defaultPressed: true }),
+    h(A.ToggleChip, { label: 'Krum', hint: 'robust agg.' })));
+</script>
+</body>
+</html>

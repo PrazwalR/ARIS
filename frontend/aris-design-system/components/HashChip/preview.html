@@ -1,0 +1,16 @@
+<!-- @dsCard group="Data" height=110 subtitle="Middle truncation, click to expand" -->
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>HashChip — preview</title></head>
+<body>
+<div id="root" class="ar-stack" style="max-width:520px"></div>
+<script>
+  var A = window.Aris, h = React.createElement;
+  var rid = 'b742e09a5c13f8d4e6a71b20c94f3d58a17e6b92c04d81f3a5e9c6b07d2f2d37';
+  ReactDOM.createRoot(document.getElementById('root')).render(h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 8 } },
+    h(A.HashChip, { label: 'risk_id', value: rid }),
+    h(A.HashChip, { label: 'sig', value: 'e5c2a90d4f7b13e8c6a2d95f0b4e17c3', head: 6, tail: 4 }),
+    h(A.HashChip, { value: rid, defaultExpanded: true })));
+</script>
+</body>
+</html>

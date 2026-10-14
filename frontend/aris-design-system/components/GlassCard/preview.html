@@ -1,0 +1,16 @@
+<!-- @dsCard group="Surfaces" height=230 subtitle="Glass-light card over the sky" -->
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>GlassCard — preview</title></head>
+<body>
+<div id="root"></div>
+<script>
+  var A = window.Aris, h = React.createElement;
+  ReactDOM.createRoot(document.getElementById('root')).render(
+    h(A.SkyBackground, { phase: 'midday', minHeight: 220 },
+      h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 24, padding: 24 } },
+        h(A.GlassCard, { icon: 'key', eyebrow: 'Step 1', title: 'Pseudonymous IDs', body: 'Account numbers become a 64-character risk_id via keyed HMAC with daily rotating keys. The account is never shared.' }),
+        h(A.GlassCard, { icon: 'shieldCheck', eyebrow: 'Step 2', title: 'Signed signals', body: 'Every risk signal carries an Ed25519 seal. Unsigned or forged signals are rejected at the bus.' }))));
+</script>
+</body>
+</html>

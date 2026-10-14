@@ -154,6 +154,7 @@ def train_local_dp(
     noise_multiplier: float,
     seed: int = 0,
     noise_rng: np.random.Generator | None = None,
+    pos_weight: float = 1.0,
 ) -> dict[str, float]:
     """DP-SGD variant of `train_local` (Abadi et al. 2016): every mini-batch step
     clips each example's gradient to `max_grad_norm` (L2, across all parameters
@@ -173,6 +174,11 @@ def train_local_dp(
     reported epsilon meaningless. Pass an explicit `noise_rng` only when a test
     needs to pin a specific noise draw.
 
+    `pos_weight` is a fixed, public class weight -- never computed from `y`.
+    A weight derived from the shard's own labels makes one example's presence
+    change every other positive's gradient, breaking the per-example
+    sensitivity bound the accountant relies on.
+
     Returns `dp_steps` alongside `loss` so the caller can accumulate the total
     step count actually taken (varies with shard size) for accounting.
     """
@@ -180,7 +186,6 @@ def train_local_dp(
     noise_rng = noise_rng if noise_rng is not None else np.random.default_rng()
     x = np.asarray(x, dtype=np.float32)
     y = np.asarray(y, dtype=np.float32)
-    pos_weight = _pos_weight(y)
     n = len(y)
     last = 0.0
     steps = 0

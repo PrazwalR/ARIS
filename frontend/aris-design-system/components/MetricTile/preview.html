@@ -1,0 +1,16 @@
+<!-- @dsCard group="Data" height=190 subtitle="Count-up display numerals" -->
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>MetricTile — preview</title></head>
+<body>
+<div id="root"></div>
+<script>
+  var A = window.Aris, h = React.createElement;
+  ReactDOM.createRoot(document.getElementById('root')).render(
+    h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 24, padding: 16 } },
+      h(A.GlassCard, { lift: false }, h(A.MetricTile, { label: 'Global AUC · ULB', value: '0.990', context: h('span', null, 'PR-AUC ', h('b', null, '0.926')) })),
+      h(A.GlassCard, { lift: false }, h(A.MetricTile, { label: 'Live Kafka', value: 564, unit: 'signals/s', context: h('span', null, h('b', null, '0'), ' lost updates') })),
+      h(A.GlassCard, { lift: false }, h(A.MetricTile, { label: 'FedAvg AUC · synthetic', value: '0.655', context: h('span', null, 'vs ', h('b', null, '0.572'), ' mean local') }))));
+</script>
+</body>
+</html>
