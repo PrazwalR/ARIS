@@ -1,7 +1,6 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { fixture } from "../test/fixture";
-import { Evidence } from "./Evidence";
 import { Model } from "./Model";
 import { Overview } from "./Overview";
 import { Security } from "./Security";
@@ -53,24 +52,5 @@ describe("Security", () => {
     const withLimits = SECURITY_AREAS.filter((a) => a.limitation).length;
     expect(screen.getAllByText("None recorded")).toHaveLength(8 - withLimits);
     expect(screen.getByText(/Real HSM hardware not available/)).toBeInTheDocument();
-  });
-});
-
-describe("Evidence", () => {
-  it("passes only the checks that were measured as passing", () => {
-    render(<Evidence data={fixture} />);
-    const checks = screen.getByTestId("checks");
-    expect(screen.getByTestId("badge-tests").textContent).toContain("926 passed");
-    const lint = within(checks).getByText("Lint").closest("tr")!;
-    const types = within(checks).getByText("Type check").closest("tr")!;
-    expect(lint.textContent).toContain("Pass");
-    expect(types.textContent).toContain("Fail"); // mypy_strict is false in the fixture
-    expect(screen.getByText(/Not running during this export/)).toBeInTheDocument();
-  });
-
-  it("marks the test suite as failing when tests failed", () => {
-    render(<Evidence data={{ ...fixture, tests: { ...fixture.tests!, failed: 2, exit_code: 1 } }} />);
-    const row = within(screen.getByTestId("checks")).getByText("Test suite").closest("tr")!;
-    expect(row.textContent).toContain("Fail");
   });
 });

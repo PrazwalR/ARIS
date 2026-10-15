@@ -21,6 +21,7 @@ from ``BankBot.pre_transaction`` over HTTP.
 
 from __future__ import annotations
 
+import logging
 import os
 import secrets
 import sys
@@ -273,6 +274,12 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--dist", type=Path, default=DEFAULT_DIST)
     args = parser.parse_args(argv)
+
+    # Show BankBot's own decision lines in this terminal, next to uvicorn's
+    # request log, so a live audience can watch each decision being made.
+    # They carry the pseudonymous risk_id, never an account number.
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(name)s  %(message)s")
+    logging.getLogger("aris").setLevel(logging.INFO)
 
     if not os.environ.get(SALT_ENV_VAR):
         os.environ[DEV_MODE_ENV_VAR] = "1"

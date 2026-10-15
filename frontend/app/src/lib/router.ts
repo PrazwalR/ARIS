@@ -7,7 +7,6 @@ export const PAGES = [
   { path: "/live", label: "Live demo" },
   { path: "/model", label: "Model" },
   { path: "/security", label: "Security" },
-  { path: "/evidence", label: "Evidence" },
 ] as const;
 
 const CHANGE = "aris:navigate";

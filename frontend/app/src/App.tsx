@@ -5,7 +5,6 @@ import { LiveProvider } from "./lib/live";
 import { Link } from "./components/Link";
 import { usePageFocus, usePath } from "./lib/router";
 import { useTheme } from "./lib/ui";
-import { Evidence } from "./pages/Evidence";
 import { Live } from "./pages/Live";
 import { Model } from "./pages/Model";
 import { Overview } from "./pages/Overview";
@@ -34,9 +33,9 @@ function Page(props: { path: string; data: MetricsData | null; state: string }) 
   if (path === "/") return <Overview data={data} />;
   if (path === "/live") return <Live />;
   if (path === "/security") return <Security />;
-  if (path === "/model" || path === "/evidence") {
+  if (path === "/model") {
     if (!data) return <DataStatus failed={props.state === "error"} />;
-    return path === "/model" ? <Model data={data} /> : <Evidence data={data} />;
+    return <Model data={data} />;
   }
   return (
     <div className="container">

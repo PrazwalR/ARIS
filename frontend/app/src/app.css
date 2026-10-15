@@ -16,13 +16,39 @@
 
 * { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; }
+html { background: var(--surface-000); }
 body {
   margin: 0;
-  background: var(--surface-000);
+  background: transparent;
   color: var(--ink-900);
   font: 400 15px/1.55 var(--font-sans);
   overflow-x: hidden;
 }
+/* Ambient background: a slow dawn -> midday -> dusk drift in the design
+   system's sky tokens, kept faint so all text stays at AA contrast. Static
+   under prefers-reduced-motion. */
+body::before {
+  content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background: linear-gradient(
+    165deg,
+    var(--sky-dawn-top) 0%,
+    var(--sky-midday) 30%,
+    var(--surface-000) 50%,
+    var(--sky-dawn-horizon) 70%,
+    var(--sky-dusk) 100%
+  );
+  background-size: 100% 300%;
+  opacity: 0.55;
+  animation: aris-sky 75s ease-in-out infinite alternate;
+}
+@keyframes aris-sky {
+  from { background-position: 0 0; }
+  to { background-position: 0 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  body::before { animation: none; background-position: 0 40%; }
+}
+
 h1, h2, h3 { font-family: var(--font-display); color: var(--ink-900); margin: 0; }
 p { margin: 0; }
 a { color: var(--sky-700); text-decoration: none; }
@@ -81,6 +107,8 @@ h1:focus { outline: none; }
   background: transparent; border: 1px solid var(--line-strong); border-radius: 3px; cursor: pointer;
 }
 .tool-button:hover { background: var(--surface-100); }
+.theme-button { display: inline-flex; align-items: center; gap: 6px; }
+.theme-button svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
 .menu-button { display: none; }
 @media (max-width: 900px) {
   .menu-button { display: inline-block; }
@@ -175,7 +203,7 @@ h1:focus { outline: none; }
 }
 
 /* Panels and grids */
-.panel { border: 1px solid var(--line); border-radius: 4px; background: var(--surface-raised); margin-bottom: 24px; min-width: 0; }
+.panel { border: 1px solid var(--line); border-radius: 4px; background: var(--surface-raised); margin-bottom: 24px; min-width: 0; scroll-margin-top: 76px; }
 .panel-head { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--line); }
 .panel-head h2 { font: 600 14px var(--font-sans); }
 .panel-body { padding: 16px; }

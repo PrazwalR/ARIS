@@ -8,7 +8,7 @@ const metrics = JSON.parse(
   readFileSync(new URL("../public/data/metrics.json", import.meta.url), "utf8"),
 );
 const fixed = (v: number) => v.toFixed(3);
-const PAGES = ["/", "/live", "/model", "/security", "/evidence"] as const;
+const PAGES = ["/", "/live", "/model", "/security"] as const;
 
 function trackErrors(page: Page): string[] {
   const errors: string[] = [];
@@ -32,7 +32,6 @@ test.describe("navigation", () => {
       ["Live demo", "/live"],
       ["Model", "/model"],
       ["Security", "/security"],
-      ["Evidence", "/evidence"],
       ["Overview", "/"],
     ] as const) {
       await nav.getByRole("link", { name: label }).click();
@@ -82,6 +81,17 @@ test.describe("live demo", () => {
     // The customer-facing message never carries the score.
     await expect(page.getByTestId("story-decision")).not.toContainText("92");
     expect(errors).toEqual([]);
+  });
+
+  test("every real request is logged to the browser console", async ({ page }) => {
+    const lines: string[] = [];
+    page.on("console", (m) => m.type() === "info" && lines.push(m.text()));
+    await page.goto("/live");
+    await page.getByRole("button", { name: "Run scenario" }).click();
+    await expect(page.getByTestId("forge-result")).toContainText("Rejected", { timeout: 15_000 });
+    await expect.poll(() => lines.join("\n")).toContain("POST /api/transfers → 200 · block");
+    expect(lines.join("\n")).toContain("POST /demo/flag → 200 · accepted");
+    expect(lines.join("\n")).toContain("POST /demo/forge → 200 · rejected");
   });
 
   test("before Bank B flags it, the same transfer is allowed", async ({ page }) => {
@@ -150,6 +160,30 @@ test.describe("live demo", () => {
     await expect(page.getByTestId("audit-policy")).toHaveText("step-up ≥ 50 · block ≥ 85");
   });
 
+  test("audit references: shown per decision, and Inspect loads one for investigators", async ({
+    page,
+  }) => {
+    await page.goto("/live");
+    await page.getByRole("button", { name: "Send", exact: true }).click();
+    await expect(page.getByTestId("story-ref")).toHaveText(/^[0-9a-f-]{36}$/);
+    const firstRef = (await page.getByTestId("story-ref").innerText()).trim();
+    await expect(page.getByLabel("Audit reference")).toHaveValue(firstRef);
+
+    await page.getByRole("button", { name: "Publish" }).click();
+    await page.getByRole("button", { name: "Send", exact: true }).click();
+    await expect(page.getByLabel("Audit reference")).not.toHaveValue(firstRef);
+
+    // Choose the older (allowed) decision from the log instead.
+    const rows = page.getByTestId("feed").locator("tbody tr");
+    await expect(rows).toHaveCount(2);
+    await rows.nth(1).getByRole("button", { name: /Inspect/ }).click();
+    await expect(page.getByLabel("Audit reference")).toHaveValue(firstRef);
+    await expect(page.getByLabel("Key")).toBeFocused();
+    await page.getByLabel("Key").fill("e2e-key");
+    await page.getByRole("button", { name: "Open record" }).click();
+    await expect(page.getByTestId("audit-result")).toContainText(/allow/i);
+  });
+
   test("with the demo server unreachable, nothing is faked", async ({ page }) => {
     await page.route(/\/(api|demo)\//, (route) => route.abort());
     await page.goto("/live");
@@ -185,14 +219,20 @@ test.describe("measured results", () => {
     await expect(figs).toContainText(fixed(metrics.datasets.synthetic.global.metrics.auc));
   });
 
-  test("overview and evidence report the measured run", async ({ page }) => {
+  test("overview reports the measured run", async ({ page }) => {
     await page.goto("/");
-    await expect(page.getByTestId("headline-figures")).toContainText(
-      fixed(metrics.datasets.ulb.global.metrics.auc),
-    );
+    const figs = page.getByTestId("headline-figures");
+    await expect(figs).toContainText(fixed(metrics.datasets.ulb.global.metrics.auc));
+    await expect(figs).toContainText(String(metrics.tests.passed));
+  });
+
+  test("the evidence page is gone", async ({ page }) => {
+    await page.goto("/");
+    await expect(
+      page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Evidence" }),
+    ).toHaveCount(0);
     await page.goto("/evidence");
-    await expect(page.getByTestId("badge-tests")).toContainText(`${metrics.tests.passed} passed`);
-    await expect(page.getByTestId("provenance")).toContainText(metrics.commit);
+    await expect(page.getByRole("heading", { level: 1, name: "Page not found" })).toBeVisible();
   });
 });
 
@@ -229,6 +269,26 @@ test.describe("quality", () => {
     await page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Security" }).click();
     await expect(page).toHaveURL(/\/security$/);
     await expect(page.getByRole("navigation", { name: "Main" })).toBeHidden();
+  });
+
+  test("dark mode changes the page colours", async ({ page }) => {
+    await page.emulateMedia({ colorScheme: "light" });
+    await page.goto("/");
+    const bg = () => page.evaluate(() => getComputedStyle(document.documentElement).backgroundColor);
+    const light = await bg();
+    await page.getByRole("button", { name: "Switch to dark mode" }).click();
+    await expect(page.getByRole("button", { name: "Switch to light mode" })).toBeVisible();
+    expect(await bg()).not.toBe(light);
+  });
+
+  test("the background drifts slowly, and holds still under reduced motion", async ({ page }) => {
+    const anim = () =>
+      page.evaluate(() => getComputedStyle(document.body, "::before").animationName);
+    await page.goto("/");
+    expect(await anim()).toBe("aris-sky");
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.reload();
+    expect(await anim()).toBe("none");
   });
 
   test("theme choice is applied and survives a reload", async ({ page }) => {

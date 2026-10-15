@@ -78,7 +78,23 @@ export class ApiError extends Error {
   }
 }
 
+/** One console line per real request, so anyone can watch the page talk to
+ * the server: method, path, status, time, and the outcome -- never request
+ * bodies or credentials. The decision log's background polling is left out. */
+function logRequest(method: string, path: string, status: number | "failed", ms: number, body?: unknown) {
+  if (path === "/demo/feed") return;
+  const b = (body ?? {}) as Record<string, unknown>;
+  const outcome = b.decision ?? b.result ?? b.outcome ?? b.status ?? (typeof b.detail === "string" ? b.detail : "");
+  console.info(
+    `%cARIS%c ${method} ${path} → ${status}${outcome ? ` · ${String(outcome)}` : ""} (${Math.round(ms)} ms)`,
+    "background:#16324f;color:#fff;padding:1px 5px;border-radius:2px",
+    "",
+  );
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const method = init?.method ?? "GET";
+  const started = performance.now();
   let resp: Response;
   try {
     resp = await fetch(path, {
@@ -86,19 +102,24 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
     });
   } catch {
+    logRequest(method, path, "failed", performance.now() - started);
     throw new ApiError(0, "The live demo server is not reachable.");
   }
-  if (!resp.ok) {
-    let detail = `${resp.status} ${resp.statusText}`;
-    try {
-      const body = (await resp.json()) as { detail?: unknown };
-      if (typeof body.detail === "string") detail = body.detail;
-    } catch {
-      /* non-JSON error body: keep the status line */
-    }
-    throw new ApiError(resp.status, detail);
+  let body: unknown;
+  try {
+    body = await resp.json();
+  } catch {
+    body = undefined;
   }
-  return (await resp.json()) as T;
+  logRequest(method, path, resp.status, performance.now() - started, body);
+  if (!resp.ok) {
+    const detail = (body as { detail?: unknown } | undefined)?.detail;
+    throw new ApiError(
+      resp.status,
+      typeof detail === "string" ? detail : `${resp.status} ${resp.statusText}`,
+    );
+  }
+  return body as T;
 }
 
 const post = <T>(path: string, body?: unknown) =>

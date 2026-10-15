@@ -336,11 +336,11 @@ python scripts/generate_all_reports.py
 ## Frontend — the reviewer portal
 
 `frontend/app` (Vite + React + TypeScript) uses the design system's tokens in
-`frontend/aris-design-system`. Five pages: **Overview**, **Live demo** (the
-Bank B → Bank A scenario, a sandbox and investigator access, all against the
-real BankBot API), **Model** (per-bank and federated results, ROC, training and
-privacy measurements), **Security** (the eight controls with stated limits) and
-**Evidence** (test, lint and load-test results with provenance). Every figure
+`frontend/aris-design-system`. Four pages: **Overview**, **Live demo** (the
+Bank B → Bank A scenario, a sandbox, a decision log and investigator access,
+all against the real BankBot API), **Model** (per-bank and federated results,
+ROC, training and privacy measurements) and **Security** (the eight controls
+with stated limits). Every figure
 comes from `frontend/app/public/data/metrics.json`, measured by one script on
 one commit.
 

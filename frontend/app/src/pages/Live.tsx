@@ -196,6 +196,14 @@ function Scenario() {
               <span className="muted">Not sent</span>
             )}
           </dd>
+          <dt>Audit ref</dt>
+          <dd data-testid="story-ref">
+            {transfer ? (
+              <span className="mono small">{transfer.audit_ref}</span>
+            ) : (
+              <span className="muted">Issued when the transfer is decided</span>
+            )}
+          </dd>
           <dt>Signal</dt>
           <dd data-testid="flag-result">
             {flag ? (
@@ -315,6 +323,13 @@ function Sandbox() {
 function DecisionLog() {
   const live = useLive();
   const [rows, setRows] = useState<FeedRow[]>([]);
+  // Load a decision's reference into Investigator access and move there.
+  const inspect = (ref: string) => {
+    live.setLastAuditRef(ref);
+    const panel = document.getElementById("investigator");
+    panel?.scrollIntoView({ behavior: prefersReducedMotion() ? "auto" : "smooth", block: "start" });
+    document.getElementById("investigator-key")?.focus({ preventScroll: true });
+  };
   useEffect(() => {
     if (live.status !== "online") return;
     let alive = true;
@@ -344,6 +359,9 @@ function DecisionLog() {
                 <th scope="col">Decision</th>
                 <th scope="col" className="num">Amount</th>
                 <th scope="col">risk_id</th>
+                <th scope="col">
+                  <span className="sr-only">Actions</span>
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -357,6 +375,16 @@ function DecisionLog() {
                   <td>
                     <HashChip value={r.risk_id || "unavailable"} />
                   </td>
+                  <td className="act">
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      onClick={() => inspect(r.audit_ref)}
+                      aria-label={`Inspect decision at ${shortTime(r.decided_at)}`}
+                    >
+                      Inspect
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -369,7 +397,7 @@ function DecisionLog() {
 
 function Investigator() {
   const live = useLive();
-  const ids = { id: useId(), key: useId(), reason: useId(), ref: useId() };
+  const ids = { id: useId(), reason: useId(), ref: useId() };
   const [idEdit, setId] = useState<string | null>(null);
   const investigator = idEdit ?? live.investigatorId ?? "";
   const [key, setKey] = useState("");
@@ -410,15 +438,21 @@ function Investigator() {
       title="Investigator access"
       aside={<span className="small muted">encrypted at rest · every read is logged</span>}
       className="investigator"
+      id="investigator"
     >
+      <p className="small muted intro-line">
+        Every decision gets an audit reference. The latest one is filled in automatically; use{" "}
+        <strong>Inspect</strong> in the decision log to choose another. The key is printed by the demo
+        server at startup.
+      </p>
       <form className="form form-row" onSubmit={submit}>
         <div className="field">
           <label htmlFor={ids.id}>Investigator</label>
           <input id={ids.id} className="input mono" value={investigator} onChange={(e) => setId(e.target.value)} autoComplete="username" />
         </div>
         <div className="field">
-          <label htmlFor={ids.key}>Key</label>
-          <input id={ids.key} className="input mono" type="password" value={key} onChange={(e) => setKey(e.target.value)} autoComplete="current-password" />
+          <label htmlFor="investigator-key">Key</label>
+          <input id="investigator-key" className="input mono" type="password" value={key} onChange={(e) => setKey(e.target.value)} autoComplete="current-password" />
         </div>
         <div className="field">
           <label htmlFor={ids.reason}>Reason</label>

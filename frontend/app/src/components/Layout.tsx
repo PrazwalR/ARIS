@@ -54,12 +54,22 @@ export function Header({ theme, onTheme }: { theme: Theme; onTheme: (t: Theme) =
           <ServerStatus />
           <button
             type="button"
-            className="tool-button"
+            className="tool-button theme-button"
             onClick={() => onTheme(next)}
-            aria-label={`Switch to ${next} theme`}
+            aria-label={`Switch to ${next} mode`}
             data-testid="theme-toggle"
           >
-            {theme === "dark" ? "Light" : "Dark"}
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              {theme === "dark" ? (
+                <>
+                  <circle cx="12" cy="12" r="4" />
+                  <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+                </>
+              ) : (
+                <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9z" />
+              )}
+            </svg>
+            {theme === "dark" ? "Light mode" : "Dark mode"}
           </button>
           <button
             type="button"
@@ -104,9 +114,16 @@ export function PageHead({ title, lede, children }: { title: string; lede?: stri
   );
 }
 
-export function Panel(props: { title?: string; aside?: ReactNode; children: ReactNode; className?: string; testId?: string }) {
+export function Panel(props: {
+  title?: string;
+  aside?: ReactNode;
+  children: ReactNode;
+  className?: string;
+  testId?: string;
+  id?: string;
+}) {
   return (
-    <section className={`panel ${props.className ?? ""}`} data-testid={props.testId}>
+    <section id={props.id} className={`panel ${props.className ?? ""}`} data-testid={props.testId}>
       {props.title ? (
         <header className="panel-head">
           <h2>{props.title}</h2>

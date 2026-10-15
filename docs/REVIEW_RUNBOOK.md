@@ -264,9 +264,11 @@ transfer comes back **Blocked**, BANK-EVIL's forged "score 0" is **Rejected:
 signature invalid**. Tick **Network view** to replace the account number with
 the risk_id the network actually sees. Under **Investigator access**, open the
 blocked transfer's record with the key the server printed at startup. Then
-walk **Model**, **Security** and **Evidence**. If asked whether the page is
-real: stop the server and reload — the header shows "Demo server offline" and
-no decisions are shown rather than faked.
+walk **Model** and **Security**. If asked whether the page is real: open the
+browser console (each request is logged with its decision) and point at the
+server terminal (BankBot logs every decision); or stop the server and reload —
+the header shows "Demo server offline" and no decisions are shown rather than
+faked.
 
 ## 5. The measured numbers, reproduced live
 
