@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { fixed, grouped, isValidIfsc, parseRupees, percent, rupees, scientific } from "./format";
 import { pillDecision } from "./api";
-import { skyPhaseFor } from "./ui";
 
 describe("fixed", () => {
   it("keeps the reported precision, trailing zeros included", () => {
@@ -61,11 +60,5 @@ describe("misc", () => {
     expect(pillDecision("step_up")).toBe("stepup");
     expect(pillDecision("block")).toBe("block");
     expect(pillDecision("allow")).toBe("allow");
-  });
-  it("pins the sky to the visitor's local hour", () => {
-    expect(skyPhaseFor(7)).toBe("dawn");
-    expect(skyPhaseFor(13)).toBe("midday");
-    expect(skyPhaseFor(20)).toBe("dusk");
-    expect(skyPhaseFor(2)).toBe("dusk");
   });
 });

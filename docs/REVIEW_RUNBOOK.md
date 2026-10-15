@@ -251,22 +251,22 @@ pinned to a different authority key. Needs `docker compose up -d` from step 0.
 
 ## 4d. The reviewer portal, live
 
-**Shows:** the whole system in one page — the hero story against the real
-BankBot API, a transfer form and decision log, the analyst view, and every
-measured result — built on the design system.
+**Shows:** the system end to end in a browser, against the real BankBot API,
+with every measured result one click away.
 
 ```bash
 (cd frontend/app && npm ci && npm run build)
 python -m aris.demo.server          # http://127.0.0.1:8000
 ```
 
-Click **Play the whole story**: Bank B flags ACC-999, Anu's transfer comes back
-**Blocked**, BANK-EVIL's forged "score 0" is **Rejected: signature invalid**.
-Turn on **Privacy lens** to swap every account number for the risk_id the
-network actually sees. In **Try it**, open the blocked transfer's record in the
-analyst view with the investigator key the server printed at startup. If a
-reviewer asks whether the page is real: stop the server and reload — it shows
-"the live demo server isn't running" and no decisions, rather than faking any.
+Open **Live demo** and click **Run scenario**: Bank B flags ACC-999, Anu's
+transfer comes back **Blocked**, BANK-EVIL's forged "score 0" is **Rejected:
+signature invalid**. Tick **Network view** to replace the account number with
+the risk_id the network actually sees. Under **Investigator access**, open the
+blocked transfer's record with the key the server printed at startup. Then
+walk **Model**, **Security** and **Evidence**. If asked whether the page is
+real: stop the server and reload — the header shows "Demo server offline" and
+no decisions are shown rather than faked.
 
 ## 5. The measured numbers, reproduced live
 

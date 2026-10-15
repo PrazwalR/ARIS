@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-dark-theme.svg">
+  <img src="docs/assets/logo.svg" alt="ARIS" width="180">
+</picture>
+
 # ARIS: AI-Agent Risk Integration System
 
 **Bridging AI-agent security and federated fraud detection through a Shared Risk-Signal Bus.**
@@ -330,12 +335,14 @@ python scripts/generate_all_reports.py
 
 ## Frontend — the reviewer portal
 
-`frontend/app` (Vite + React + TypeScript) is built strictly from the design
-system in `frontend/aris-design-system`. It tells the hero story live — Bank B
-flags ACC-999, Anu's transfer at Bank A is blocked, a hostile member's forged
-retraction is rejected — against the real BankBot API, not an animation, and
-every figure on it comes from `frontend/app/public/data/metrics.json`, measured
-by one script on one commit.
+`frontend/app` (Vite + React + TypeScript) uses the design system's tokens in
+`frontend/aris-design-system`. Five pages: **Overview**, **Live demo** (the
+Bank B → Bank A scenario, a sandbox and investigator access, all against the
+real BankBot API), **Model** (per-bank and federated results, ROC, training and
+privacy measurements), **Security** (the eight controls with stated limits) and
+**Evidence** (test, lint and load-test results with provenance). Every figure
+comes from `frontend/app/public/data/metrics.json`, measured by one script on
+one commit.
 
 ```bash
 # one-time

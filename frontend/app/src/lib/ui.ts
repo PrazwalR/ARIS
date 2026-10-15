@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
 export function prefersReducedMotion(): boolean {
   return (
@@ -6,30 +6,6 @@ export function prefersReducedMotion(): boolean {
     typeof window.matchMedia === "function" &&
     window.matchMedia("(prefers-reduced-motion: reduce)").matches
   );
-}
-
-/** Scroll reveal: fade + 16px rise once, on first view. Reduced motion (and
- * environments without IntersectionObserver) show content immediately. */
-export function useReveal<T extends HTMLElement>(): [React.RefObject<T | null>, boolean] {
-  const ref = useRef<T>(null);
-  const [shown, setShown] = useState(
-    () => prefersReducedMotion() || typeof IntersectionObserver !== "function",
-  );
-  useEffect(() => {
-    if (shown || !ref.current) return;
-    const io = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((e) => e.isIntersecting)) {
-          setShown(true);
-          io.disconnect();
-        }
-      },
-      { threshold: 0.12 },
-    );
-    io.observe(ref.current);
-    return () => io.disconnect();
-  }, [shown]);
-  return [ref, shown];
 }
 
 export type Theme = "light" | "dark";
@@ -66,11 +42,4 @@ export function useTheme(): [Theme, (t: Theme) => void] {
     }
   };
   return [theme, setTheme];
-}
-
-/** The sky phase pinned to the visitor's local hour. */
-export function skyPhaseFor(hour: number): "dawn" | "midday" | "dusk" {
-  if (hour >= 5 && hour < 10) return "dawn";
-  if (hour >= 10 && hour < 17) return "midday";
-  return "dusk";
 }

@@ -1,58 +1,64 @@
-import { LiveProvider } from "./lib/live";
+import { Footer, Header, PageHead } from "./components/Layout";
 import { useMetrics } from "./lib/data";
+import type { MetricsData } from "./lib/data";
+import { LiveProvider } from "./lib/live";
+import { Link } from "./components/Link";
+import { usePageFocus, usePath } from "./lib/router";
 import { useTheme } from "./lib/ui";
-import { Console } from "./sections/Console";
-import { Federated } from "./sections/Federated";
-import { Footer } from "./sections/Footer";
-import { Header } from "./sections/Header";
-import { Hero } from "./sections/Hero";
-import { HowItWorks } from "./sections/HowItWorks";
-import { Metrics } from "./sections/Metrics";
-import { Proof } from "./sections/Proof";
-import { Security } from "./sections/Security";
+import { Evidence } from "./pages/Evidence";
+import { Live } from "./pages/Live";
+import { Model } from "./pages/Model";
+import { Overview } from "./pages/Overview";
+import { Security } from "./pages/Security";
 
 export default function App() {
   const [theme, setTheme] = useTheme();
   const metrics = useMetrics();
+  const path = usePath();
+  usePageFocus(path);
+  const data = metrics.state === "ready" ? metrics.data : null;
 
   return (
     <LiveProvider>
-      <div id="top" />
       <Header theme={theme} onTheme={setTheme} />
-      <main id="main" tabIndex={-1}>
-        <Hero />
-        <HowItWorks />
-        <Console />
-        {metrics.state === "ready" ? (
-          <>
-            <Federated data={metrics.data} />
-            <Metrics data={metrics.data} />
-          </>
-        ) : (
-          <MetricsStatus state={metrics.state} message={metrics.state === "error" ? metrics.message : ""} />
-        )}
-        <Security />
-        {metrics.state === "ready" ? <Proof data={metrics.data} /> : null}
+      <main id="main" className="main">
+        <Page path={path} data={data} state={metrics.state} />
       </main>
       <Footer />
     </LiveProvider>
   );
 }
 
-function MetricsStatus({ state, message }: { state: "loading" | "error"; message: string }) {
+function Page(props: { path: string; data: MetricsData | null; state: string }) {
+  const { path, data } = props;
+  if (path === "/") return <Overview data={data} />;
+  if (path === "/live") return <Live />;
+  if (path === "/security") return <Security />;
+  if (path === "/model" || path === "/evidence") {
+    if (!data) return <DataStatus failed={props.state === "error"} />;
+    return path === "/model" ? <Model data={data} /> : <Evidence data={data} />;
+  }
   return (
-    <section className="band band-plain" aria-live="polite">
-      <div className="container">
-        {state === "loading" ? (
-          <p className="body muted">Loading measured results…</p>
-        ) : (
-          <p className="body error-text" role="alert" data-testid="metrics-error">
-            Measured results could not be loaded ({message}). Generate them with{" "}
-            <code className="mono-s">python scripts/export_frontend_data.py</code>. Nothing is
-            shown in their place.
-          </p>
-        )}
-      </div>
-    </section>
+    <div className="container">
+      <PageHead title="Page not found" lede="That address does not exist on this site." />
+      <Link to="/" className="btn">
+        Back to overview
+      </Link>
+    </div>
+  );
+}
+
+function DataStatus({ failed }: { failed: boolean }) {
+  return (
+    <div className="container">
+      {failed ? (
+        <PageHead
+          title="Results unavailable"
+          lede="Measured results could not be loaded. Generate them with python scripts/export_frontend_data.py."
+        />
+      ) : (
+        <p className="muted">Loading measured results…</p>
+      )}
+    </div>
   );
 }
