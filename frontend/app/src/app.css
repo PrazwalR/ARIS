@@ -277,6 +277,6 @@ table.data { width: 100%; border-collapse: collapse; font-size: 14px; }
 
 /* Footer */
 .site-footer { border-top: 1px solid var(--line); padding: 28px 0; }
-.footer-row { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 20px; align-items: flex-start; }
+.footer-row { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 20px; align-items: center; }
 .footer-row p { margin-top: 8px; }
 .footer-links { display: flex; flex-wrap: wrap; gap: 20px; font-size: 14px; }

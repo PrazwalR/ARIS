@@ -79,12 +79,7 @@ export function Footer() {
   return (
     <footer className="site-footer">
       <div className="container footer-row">
-        <div>
-          <Logo className="logo-sm" />
-          <p className="small muted">
-            Student research project. Implemented components, not a production deployment.
-          </p>
-        </div>
+        <Logo className="logo-sm" />
         <nav aria-label="Documents" className="footer-links">
           <a href={`${REPO}/blob/main/docs/SECURITY.md`}>Security model</a>
           <a href={`${REPO}/blob/main/docs/METRICS.md`}>Metrics</a>
