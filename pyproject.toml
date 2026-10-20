@@ -15,7 +15,10 @@ license = { file = "LICENSE" }
 # milestones that actually use them, as extras below.
 dependencies = [
     "pydantic>=2.7",      # schema validation on the shared contract
-    "cryptography>=48.0.1", # Ed25519 attestation; >=48.0.1 for GHSA-537c-gmf6-5ccf
+    # Ed25519 attestation. >=48.0.1 fixes GHSA-537c-gmf6-5ccf; on Python 3.10 the
+    # newest flwr (1.30) still caps cryptography <47, so 3.10 stays on 46.x.
+    "cryptography>=48.0.1; python_version >= '3.11'",
+    "cryptography>=46.0.5; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]
