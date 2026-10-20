@@ -1,0 +1,125 @@
+{
+ "confirm_lag_s": 3600.0,
+ "seeds": [
+  42,
+  43,
+  44,
+  45,
+  46
+ ],
+ "mean": {
+  "local": {
+   "fraud_block": 270.4,
+   "fraud_step_up": 0.0,
+   "fraud_allow": 29.6,
+   "legit_block": 0.0,
+   "legit_step_up": 0.4
+  },
+  "aris": {
+   "fraud_block": 285.8,
+   "fraud_step_up": 0.0,
+   "fraud_allow": 14.2,
+   "legit_block": 0.0,
+   "legit_step_up": 0.4
+  }
+ },
+ "per_seed": {
+  "42": {
+   "local": {
+    "legit_allow": 5700,
+    "legit_total": 5700,
+    "fraud_allow": 31,
+    "fraud_total": 300,
+    "flags_published": 31,
+    "fraud_block": 269
+   },
+   "aris": {
+    "legit_allow": 5700,
+    "legit_total": 5700,
+    "fraud_allow": 14,
+    "fraud_total": 300,
+    "flags_published": 14,
+    "fraud_block": 286
+   }
+  },
+  "43": {
+   "local": {
+    "legit_allow": 5700,
+    "legit_total": 5700,
+    "fraud_allow": 26,
+    "fraud_total": 300,
+    "flags_published": 26,
+    "fraud_block": 274
+   },
+   "aris": {
+    "legit_allow": 5700,
+    "legit_total": 5700,
+    "fraud_allow": 17,
+    "fraud_total": 300,
+    "flags_published": 17,
+    "fraud_block": 283
+   }
+  },
+  "44": {
+   "local": {
+    "legit_allow": 5700,
+    "legit_total": 5700,
+    "fraud_allow": 30,
+    "fraud_total": 300,
+    "flags_published": 30,
+    "fraud_block": 270
+   },
+   "aris": {
+    "legit_allow": 5700,
+    "legit_total": 5700,
+    "fraud_allow": 12,
+    "fraud_total": 300,
+    "flags_published": 12,
+    "fraud_block": 288
+   }
+  },
+  "45": {
+   "local": {
+    "fraud_allow": 29,
+    "fraud_total": 300,
+    "legit_allow": 5698,
+    "legit_total": 5700,
+    "flags_published": 29,
+    "fraud_block": 271,
+    "legit_step_up": 2
+   },
+   "aris": {
+    "fraud_allow": 14,
+    "fraud_total": 300,
+    "legit_allow": 5698,
+    "legit_total": 5700,
+    "flags_published": 14,
+    "fraud_block": 286,
+    "legit_step_up": 2
+   }
+  },
+  "46": {
+   "local": {
+    "legit_allow": 5700,
+    "legit_total": 5700,
+    "fraud_allow": 32,
+    "fraud_total": 300,
+    "flags_published": 32,
+    "fraud_block": 268
+   },
+   "aris": {
+    "legit_allow": 5700,
+    "legit_total": 5700,
+    "fraud_allow": 14,
+    "fraud_total": 300,
+    "flags_published": 14,
+    "fraud_block": 286
+   }
+  }
+ },
+ "caveats": [
+  "all 300 frauds per stream go to 5 mule accounts, which favours the local setting",
+  "the stream has no false flags, so legit_block = 0 says nothing about false-positive cost",
+  "step-up is counted as money moved (worst case)"
+ ]
+}

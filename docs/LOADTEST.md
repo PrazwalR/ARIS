@@ -24,7 +24,8 @@ which vary by hardware and would make CI flaky for no real signal.
 
 > Re-measured 2026-10-20 after the environment moved from cryptography 46.0.7
 > to 50.0.2: the in-memory bus now publishes about 20,000–25,000 signals/s
-> (20 × 200, three runs, 0 lost updates); Kafka 600–870 signals/s. The
+> (20 × 200, three runs, 0 lost updates); Kafka about 630 signals/s at 10 × 50 and
+> 2,000 signals/s at 20 × 200 on a fresh topic (`docs/results/load_repeat.json`). The
 > September tables below are kept as measured on cryptography 46, where
 > Ed25519 verification held the GIL and capped throughput near 3,500/s.
 

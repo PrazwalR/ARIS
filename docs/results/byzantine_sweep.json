@@ -1,0 +1,159 @@
+{
+ "honest_banks": 6,
+ "rounds": 6,
+ "seeds": [
+  42,
+  43,
+  44
+ ],
+ "rows": [
+  {
+   "attackers": 0,
+   "share": 0.0,
+   "fedavg": {
+    "per_seed": [
+     0.6391,
+     0.6334,
+     0.6308
+    ],
+    "mean": 0.634,
+    "sd": 0.004
+   },
+   "coordinate_median": {
+    "per_seed": [
+     0.5899,
+     0.6164,
+     0.626
+    ],
+    "mean": 0.611,
+    "sd": 0.019
+   },
+   "krum": {
+    "per_seed": [
+     0.5985,
+     0.5668,
+     0.5766
+    ],
+    "mean": 0.581,
+    "sd": 0.016
+   }
+  },
+  {
+   "attackers": 1,
+   "share": 0.143,
+   "fedavg": {
+    "per_seed": [
+     0.5225,
+     0.4667,
+     0.504
+    ],
+    "mean": 0.498,
+    "sd": 0.028
+   },
+   "coordinate_median": {
+    "per_seed": [
+     0.5892,
+     0.6252,
+     0.6119
+    ],
+    "mean": 0.609,
+    "sd": 0.018
+   },
+   "krum": {
+    "per_seed": [
+     0.5808,
+     0.5962,
+     0.5766
+    ],
+    "mean": 0.585,
+    "sd": 0.01
+   }
+  },
+  {
+   "attackers": 2,
+   "share": 0.25,
+   "fedavg": {
+    "per_seed": [
+     0.5216,
+     0.4676,
+     0.5027
+    ],
+    "mean": 0.497,
+    "sd": 0.027
+   },
+   "coordinate_median": {
+    "per_seed": [
+     0.5807,
+     0.6142,
+     0.5949
+    ],
+    "mean": 0.597,
+    "sd": 0.017
+   },
+   "krum": {
+    "per_seed": [
+     0.5808,
+     0.5962,
+     0.5766
+    ],
+    "mean": 0.585,
+    "sd": 0.01
+   }
+  },
+  {
+   "attackers": 3,
+   "share": 0.333,
+   "fedavg": {
+    "per_seed": [
+     0.522,
+     0.4681,
+     0.5027
+    ],
+    "mean": 0.498,
+    "sd": 0.027
+   },
+   "coordinate_median": {
+    "per_seed": [
+     0.5634,
+     0.5758,
+     0.6025
+    ],
+    "mean": 0.581,
+    "sd": 0.02
+   },
+   "krum": {
+    "per_seed": [
+     0.5808,
+     0.5962,
+     0.5766
+    ],
+    "mean": 0.585,
+    "sd": 0.01
+   }
+  },
+  {
+   "attackers": 4,
+   "share": 0.4,
+   "fedavg": {
+    "per_seed": [
+     0.522,
+     0.4686,
+     0.5027
+    ],
+    "mean": 0.498,
+    "sd": 0.027
+   },
+   "coordinate_median": {
+    "per_seed": [
+     0.6296,
+     0.5621,
+     0.5807
+    ],
+    "mean": 0.591,
+    "sd": 0.035
+   },
+   "krum": null
+  }
+ ],
+ "note": "null = not run: Krum needs more than 2f+2 banks"
+}
