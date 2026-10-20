@@ -4,10 +4,10 @@ import { HashChip, StatusPill } from "@aris/components/aris.esm.js";
 import { AccountRef, OfflineNotice, TableWrap } from "../components/common";
 import { PageHead, Panel } from "../components/Layout";
 import { api, ApiError, pillDecision } from "../lib/api";
-import type { AuditRecord, FeedRow, FlagResult, ForgeResult, TransferResult } from "../lib/api";
+import type { AuditRecord, Decision, FeedRow, FlagResult, ForgeResult, TransferResult } from "../lib/api";
 import { isValidIfsc, parseRupees, rupees, shortTime } from "../lib/format";
 import { useLive } from "../lib/liveContext";
-import { STORY } from "../lib/story";
+import { CASES, STORY } from "../lib/story";
 import { prefersReducedMotion } from "../lib/ui";
 
 const FEED_POLL_MS = 3000;
@@ -28,9 +28,17 @@ export function Live() {
           Network view
           <span className="muted"> · show pseudonymous IDs</span>
         </label>
+        <OutageSwitch />
       </PageHead>
       <OfflineNotice />
+      {live.busDown ? (
+        <p className="notice notice-warn" role="status" data-testid="outage-banner">
+          Bus outage on: every lookup answers <span className="mono">unavailable</span>. BankBot fails closed, so
+          nothing is allowed blind.
+        </p>
+      ) : null}
       <Scenario />
+      <PolicyCases />
       <div className="grid-2">
         <Sandbox />
         <DecisionLog />
@@ -58,6 +66,151 @@ function useAction() {
     }
   }
   return { busy, error, run };
+}
+
+function OutageSwitch() {
+  const live = useLive();
+  const [busy, setBusy] = useState(false);
+  return (
+    <label className="check">
+      <input
+        type="checkbox"
+        checked={live.busDown}
+        disabled={live.status !== "online" || busy}
+        onChange={(e) => {
+          setBusy(true);
+          live
+            .setBusDown(e.target.checked)
+            .catch(() => live.recheck())
+            .finally(() => setBusy(false));
+        }}
+        data-testid="outage"
+      />
+      Bus outage
+      <span className="muted"> · fault injection</span>
+    </label>
+  );
+}
+
+interface CaseOutcome {
+  actual: Decision;
+  auditRef: string;
+}
+
+/** Every policy branch, run against the real API: publish (if any), forge (if
+ * any), outage (if any), then the transfer. "Expected" is the rule; "BankBot"
+ * is what the server decided. */
+function PolicyCases() {
+  const live = useLive();
+  const { busy, error, run } = useAction();
+  const [outcomes, setOutcomes] = useState<Record<string, CaseOutcome>>({});
+  const [current, setCurrent] = useState<string | null>(null);
+
+  const runAll = () =>
+    run(async () => {
+      setOutcomes({});
+      await api.reset();
+      try {
+        for (const c of CASES) {
+          setCurrent(c.id);
+          if (c.flag) await api.flag(STORY.ifsc, c.account, c.flag);
+          if (c.forge) await api.forge(STORY.ifsc, c.account);
+          if (c.outage) await live.setBusDown(true);
+          const r = await api.transfer({
+            receiver_ifsc: STORY.ifsc,
+            receiver_account: c.account,
+            amount_minor: c.amountMinor,
+          });
+          if (c.outage) await live.setBusDown(false);
+          live.setLastAuditRef(r.audit_ref);
+          setOutcomes((prev) => ({ ...prev, [c.id]: { actual: r.decision, auditRef: r.audit_ref } }));
+          live.bumpFeed();
+        }
+      } finally {
+        setCurrent(null);
+        if (live.busDown) await live.setBusDown(false);
+      }
+    });
+
+  const done = Object.keys(outcomes).length;
+  const matched = CASES.filter((c) => outcomes[c.id]?.actual === c.expect).length;
+  const locked = live.status !== "online" || busy;
+
+  return (
+    <Panel
+      title="Policy cases"
+      testId="policy-cases"
+      aside={
+        <div className="panel-actions">
+          {done ? (
+            <span className="small muted" data-testid="cases-summary">
+              {matched}/{CASES.length} match
+            </span>
+          ) : null}
+          <button type="button" className="btn btn-sm btn-primary" onClick={runAll} disabled={locked}>
+            {busy ? "Running…" : "Run all cases"}
+          </button>
+        </div>
+      }
+    >
+      <TableWrap label="Policy cases">
+        <table className="data compact">
+          <thead>
+            <tr>
+              <th scope="col">#</th>
+              <th scope="col">Case</th>
+              <th scope="col" className="num">Amount</th>
+              <th scope="col">Rule</th>
+              <th scope="col">Expected</th>
+              <th scope="col">BankBot</th>
+              <th scope="col">Audit ref</th>
+            </tr>
+          </thead>
+          <tbody>
+            {CASES.map((c, i) => {
+              const o = outcomes[c.id];
+              return (
+                <tr key={c.id} data-testid={`case-${c.id}`} aria-current={current === c.id ? "step" : undefined}>
+                  <td className="mono">{i + 1}</td>
+                  <td>
+                    {c.label}
+                    {c.flag ? (
+                      <span className="small muted block">
+                        score {c.flag.riskScore}, confidence {c.flag.confidence}
+                      </span>
+                    ) : null}
+                  </td>
+                  <td className="num mono">{rupees(c.amountMinor)}</td>
+                  <td className="small">{c.why}</td>
+                  <td>
+                    <StatusPill decision={pillDecision(c.expect)}>{WORD[pillDecision(c.expect)]}</StatusPill>
+                  </td>
+                  <td data-testid={`case-${c.id}-actual`}>
+                    {o ? (
+                      <StatusPill decision={pillDecision(o.actual)}>
+                        {WORD[pillDecision(o.actual)]}
+                        {o.actual === c.expect ? "" : " ≠"}
+                      </StatusPill>
+                    ) : current === c.id ? (
+                      <span className="muted">…</span>
+                    ) : (
+                      <span className="muted">—</span>
+                    )}
+                  </td>
+                  <td className="mono small">{o ? o.auditRef.slice(0, 8) : ""}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </TableWrap>
+      {error ? (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      ) : null}
+    </Panel>
+  );
 }
 
 function Scenario() {
@@ -244,13 +397,18 @@ function Scenario() {
 function Sandbox() {
   const live = useLive();
   const { busy, error, run } = useAction();
-  const ids = { ifsc: useId(), account: useId(), amount: useId() };
+  const ids = { ifsc: useId(), account: useId(), amount: useId(), score: useId(), confidence: useId() };
   const [ifsc, setIfsc] = useState("HDFC0001234");
   const [account, setAccount] = useState("ACC-12345");
   const [amount, setAmount] = useState("2,500");
+  const [score, setScore] = useState("92");
+  const [confidence, setConfidence] = useState("0.94");
   const [result, setResult] = useState<TransferResult | null>(null);
   const [flagged, setFlagged] = useState<string | null>(null);
 
+  const scoreN = /^\d{1,3}$/.test(score.trim()) ? Number(score) : NaN;
+  const confN = /^(0(\.\d+)?|1(\.0+)?)$/.test(confidence.trim()) ? Number(confidence) : NaN;
+  const flagOk = scoreN >= 0 && scoreN <= 100 && confN >= 0 && confN <= 1;
   const ifscOk = isValidIfsc(ifsc);
   const amountMinor = parseRupees(amount);
   const valid = ifscOk && account.trim().length > 0 && amountMinor !== null;
@@ -272,8 +430,11 @@ function Sandbox() {
   };
   const flag = () =>
     run(async () => {
-      const r = await api.flag(ifsc.trim().toUpperCase(), account.trim());
-      setFlagged(`Flagged by ${r.publisher}, score ${r.network.score}`);
+      const r = await api.flag(ifsc.trim().toUpperCase(), account.trim(), {
+        riskScore: scoreN,
+        confidence: confN,
+      });
+      setFlagged(`Flagged by ${r.publisher}, score ${r.network.score} (${r.outcome})`);
     });
 
   return (
@@ -293,11 +454,21 @@ function Sandbox() {
           <input id={ids.amount} className="input mono" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} aria-invalid={amountMinor === null} aria-describedby={amountMinor === null ? `${ids.amount}-e` : undefined} />
           {amountMinor === null ? <p id={`${ids.amount}-e`} className="field-error">Positive amount, up to two decimals.</p> : null}
         </div>
+        <div className="field-row">
+          <div className="field">
+            <label htmlFor={ids.score}>Flag score (0–100)</label>
+            <input id={ids.score} className="input mono" inputMode="numeric" value={score} onChange={(e) => setScore(e.target.value)} aria-invalid={!(scoreN >= 0 && scoreN <= 100)} />
+          </div>
+          <div className="field">
+            <label htmlFor={ids.confidence}>Confidence (0–1)</label>
+            <input id={ids.confidence} className="input mono" inputMode="decimal" value={confidence} onChange={(e) => setConfidence(e.target.value)} aria-invalid={!(confN >= 0 && confN <= 1)} />
+          </div>
+        </div>
         <div className="form-actions">
           <button type="submit" className="btn btn-primary" disabled={disabled}>
             Send transfer
           </button>
-          <button type="button" className="btn" onClick={flag} disabled={disabled}>
+          <button type="button" className="btn" onClick={flag} disabled={disabled || !flagOk}>
             Flag as Bank B
           </button>
         </div>

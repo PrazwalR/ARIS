@@ -546,11 +546,13 @@ class BankBot:
             raise TransferIdConflict(req.transfer_id) from exc
 
         logger.info(
-            "transfer=%s bank=%s decision=%s status=%s risk_id=%s",
+            "transfer=%s bank=%s amount_minor=%d status=%s score=%s decision=%s risk_id=%s",
             req.transfer_id,
             req.bank_id,
+            req.amount_minor,
+            status.value,
+            signal.risk_score if signal else "-",
             decision.value,
-            status.value if isinstance(status, LookupStatus) else status,
             risk_id,
         )
         return BankBotDecision(

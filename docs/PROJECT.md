@@ -15,9 +15,9 @@ explainability/drift/model-registry (M5, `src/aris/fl/explain.py`, `drift.py`,
 `registry.py`), and M6+ (Byzantine-robust aggregation via Krum and coordinate-median,
 a measured bus load test, all 8 items in `docs/SECURITY.md`'s hardening priority list
 including OPRF-equivalent derivation and PKCS#11 HSM keys, and the on-prem graph and
-receiver-velocity feature engine `src/aris/fl/graph_features.py` trained on authentic
-multi-bank transaction streams). Master reports and benchmarks across all phases are
-consolidated in `reports/M0_TO_M6_COMPREHENSIVE_DASHBOARD.md`. See [PHASES.md](PHASES.md).
+receiver-velocity feature engine `src/aris/fl/graph_features.py` trained on a synthetic
+multi-bank transaction stream). Measured results across all phases are
+in [METRICS.md](METRICS.md). See [PHASES.md](PHASES.md).
 
 ## 2. Problem Statement
 

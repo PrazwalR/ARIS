@@ -6,10 +6,12 @@ One process, three surfaces:
   unchanged: ``POST /api/transfers``, ``GET /api/audit/{ref}`` with
   investigator credentials (SS3.7).
 - ``/demo/*`` -- the other actors in the hero story, as real operations on the
-  same bus: Bank B signs and publishes a flag; BANK-EVIL, a registered member,
-  forges a "score 0" retraction in Bank B's name (rejected by the keyring's
-  signature check, not by special-casing); a privacy-safe decision feed read
-  from the audit sink; a reset.
+  same bus: Bank B signs and publishes a flag (any score and confidence);
+  BANK-EVIL, a registered member, forges a "score 0" retraction in Bank B's
+  name (rejected by the keyring's signature check, not by special-casing); a
+  bus outage switch (fault injection: lookups answer UNAVAILABLE, exactly what
+  the Kafka bus returns when it cannot serve a read); a privacy-safe decision
+  feed read from the audit sink; a reset.
 - ``/``       -- the built frontend (``frontend/app/dist``) and its measured
   data, when present.
 
@@ -50,14 +52,17 @@ from aris.attestation import (
     canonical_bytes,
 )
 from aris.bankbot import InMemoryAuditLog
-from aris.bus import InMemoryRiskBus
+from aris.bus import InMemoryRiskBus, LookupResult, PublishOutcome, RiskBus
 from aris.hashing import DEV_MODE_ENV_VAR, SALT_ENV_VAR, normalize_ifsc
 from aris.risk_id import HmacRiskIdDeriver, publish_id
-from aris.schema import CONFIRMED_FRAUD, HIGH_VELOCITY, NEW_BENEFICIARY, RiskSignal
+from aris.schema import CONFIRMED_FRAUD, HIGH_VELOCITY, NEW_BENEFICIARY, LookupStatus, RiskSignal
+
+logger = logging.getLogger("aris.showcase")
 
 INVESTIGATOR_ID: Final = "reviewer"
 INVESTIGATOR_KEY_ENV_VAR: Final = "ARIS_SHOWCASE_INVESTIGATOR_KEY"
-MODEL_VERSION: Final = "v0.4-fl"
+# Flags here are published by the demo operator, not scored by a model.
+MODEL_VERSION: Final = "showcase-manual"
 FEED_LIMIT: Final = 25
 DEFAULT_DIST: Final = Path(__file__).resolve().parents[3] / "frontend" / "app" / "dist"
 
@@ -78,6 +83,31 @@ class AccountRequest(BaseModel):
     receiver_account: str = Field(min_length=1, max_length=64)
 
 
+class OutageRequest(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    down: bool = Field(strict=True)
+
+
+class SwitchableBus(RiskBus):
+    """The real bus, plus a switch that makes every lookup report
+    ``UNAVAILABLE`` -- the result ``KafkaRiskBus`` gives when it cannot serve a
+    read. BankBot's fail-closed handling is what the switch exercises; nothing
+    about the decision is special-cased."""
+
+    def __init__(self, inner: RiskBus) -> None:
+        self.inner = inner
+        self.down = False
+
+    def publish(self, signed: SignedRiskSignal) -> PublishOutcome:
+        return self.inner.publish(signed)
+
+    def lookup(self, risk_id: str) -> LookupResult:
+        if self.down:
+            return LookupResult(LookupStatus.UNAVAILABLE)
+        return self.inner.lookup(risk_id)
+
+
 @dataclass
 class _World:
     """Everything a reset replaces, swapped atomically under one lock."""
@@ -86,7 +116,7 @@ class _World:
     bank_b: Publisher
     bank_evil: Publisher
     bank_evil_key: Ed25519PrivateKey
-    bus: InMemoryRiskBus
+    bus: SwitchableBus
     audit: InMemoryAuditLog
     api: FastAPI
 
@@ -99,7 +129,7 @@ def _new_world(investigator_key: str) -> _World:
     bank_evil = Publisher("BANK-EVIL", bank_evil_key)
     keyring.register(bank_b.bank_id, bank_b.public_key)
     keyring.register(bank_evil.bank_id, bank_evil.public_key)
-    bus = InMemoryRiskBus(keyring)
+    bus = SwitchableBus(InMemoryRiskBus(keyring))
     audit = InMemoryAuditLog()
     api = create_app(
         bus, settings=ApiSettings(investigators={INVESTIGATOR_ID: investigator_key}), audit=audit
@@ -139,7 +169,8 @@ def create_showcase_app(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     def _network_view(w: _World, risk_id: str) -> dict[str, object]:
-        result = w.bus.lookup(risk_id)
+        # What is actually stored, even while lookups are switched off.
+        result = w.bus.inner.lookup(risk_id)
         return {
             "status": result.status.value,
             "score": result.signal.risk_score if result.signal else None,
@@ -147,8 +178,12 @@ def create_showcase_app(
         }
 
     @app.get("/demo/health")
-    def health() -> dict[str, str]:
-        return {"status": "ok", "investigator_id": INVESTIGATOR_ID}
+    def health() -> dict[str, object]:
+        return {
+            "status": "ok",
+            "investigator_id": INVESTIGATOR_ID,
+            "bus_down": current().bus.down,
+        }
 
     @app.post("/demo/reset")
     def reset() -> dict[str, str]:
@@ -156,7 +191,15 @@ def create_showcase_app(
         fresh = _new_world(investigator_key)
         with lock:
             world = fresh
+        logger.info("reset: new keys for BANK-B and BANK-EVIL, empty bus, empty audit log")
         return {"status": "reset"}
+
+    @app.post("/demo/outage")
+    def outage(req: OutageRequest) -> dict[str, object]:
+        current().bus.down = req.down
+        state = "DOWN: every lookup now answers unavailable" if req.down else "restored"
+        logger.warning("bus %s", state)
+        return {"bus_down": req.down}
 
     @app.post("/demo/risk-id")
     def risk_id_for(req: AccountRequest) -> dict[str, object]:
@@ -180,6 +223,15 @@ def create_showcase_app(
         )
         signed = w.bank_b.sign(signal)
         outcome = w.bus.publish(signed)
+        logger.info(
+            "publish %s risk_id=%s score=%d confidence=%.2f outcome=%s sig=%s…",
+            w.bank_b.bank_id,
+            risk_id,
+            req.risk_score,
+            signal.confidence,
+            outcome.value,
+            signed.signature.hex()[:16],
+        )
         return {
             "publisher": w.bank_b.bank_id,
             "outcome": outcome.value,
@@ -213,6 +265,13 @@ def create_showcase_app(
             result, reason = outcome.value, None
         except SignatureInvalid as exc:
             result, reason = "rejected", f"signature invalid: {exc}"
+        logger.warning(
+            "forge by %s claiming %s risk_id=%s score=0 -> %s",
+            w.bank_evil.bank_id,
+            w.bank_b.bank_id,
+            risk_id,
+            result.upper(),
+        )
         return {
             "signer": w.bank_evil.bank_id,
             "claimed_publisher": w.bank_b.bank_id,

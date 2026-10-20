@@ -161,14 +161,15 @@ something *specific*, not "big number triggers fraud."
 python scripts/review_demo_unseen_scoring.py
 ```
 
-Expect two clean/typical rows to read `allow`, two fraud-pattern rows
-(mimicking what bank 0's and bank 3's fraud looked like in training) to
-read `BLOCK`, and — the point worth pausing on — a row with the *same
-spike magnitude* on feature `f6` to read `allow` too. Only 5 banks were
-trained (driving features 0–4); `f6` never drove fraud for any of them, so
-the model correctly learned it's irrelevant instead of just reacting to any
-large number. That's the difference between pattern-matching and
-memorizing a threshold.
+Each row is scored by the trained synthetic model and then run through the
+real policy (`apply_policy`). Measured on the current checkpoint: the clean
+and typical rows score 49–53 (allow or step-up; the synthetic model's
+holdout AUC is only 0.655, so they sit near the middle), the bank 0 and
+bank 3 fraud patterns score 79 and 93 (step-up and block), and a row with
+the *same spike magnitude* on feature `f6` scores 24 (allow). Only 5 banks
+were trained (driving features 0–4); `f6` never drove fraud for any of
+them, so the model learned it is irrelevant instead of reacting to any
+large number.
 
 ### 3c. Test it on data of your own instead of the synthetic set
 

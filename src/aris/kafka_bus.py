@@ -47,6 +47,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+from datetime import datetime
 import time
 from dataclasses import dataclass
 from typing import Any, Final
@@ -302,6 +303,11 @@ class KafkaRiskBus(RiskBus):
         self._local = InMemoryRiskBus(
             keyring, max_entries=max_entries, max_publisher_share=max_publisher_share
         )
+        # Signals applied locally whose Kafka send failed. A retry of the same
+        # signal reads as STALE locally, so without this it would never reach
+        # Kafka and peers would never see the flag.
+        self._unsent: set[tuple[str, str, datetime]] = set()
+        self._unsent_lock = threading.Lock()
         ensure_topic(bootstrap_servers, topic=topic, tls=tls)
         registry = SchemaRegistryClient(schema_registry_url)
         self._schema_id = registry.register(SCHEMA_SUBJECT, RiskSignal.model_json_schema())
@@ -343,18 +349,27 @@ class KafkaRiskBus(RiskBus):
 
     def publish(self, signed: SignedRiskSignal) -> PublishOutcome:
         outcome = self._local.publish(signed)
-        if outcome is PublishOutcome.ACCEPTED:
-            bucket = bucket_for_risk_id(signed.signal.risk_id)
-            key = f"{signed.signal.risk_id}:{signed.signal.source_bank_id}"
+        sig = signed.signal
+        ident = (sig.risk_id, sig.source_bank_id, sig.timestamp)
+        with self._unsent_lock:
+            retry = ident in self._unsent
+        if outcome is PublishOutcome.ACCEPTED or retry:
+            bucket = bucket_for_risk_id(sig.risk_id)
+            key = f"{sig.risk_id}:{sig.source_bank_id}"
             try:
                 self._producer.send(
                     self._topic, key=key, value=_signal_to_wire(signed), partition=bucket
                 ).get(timeout=_PRODUCE_ACK_TIMEOUT_S)
             except KafkaError as exc:
+                with self._unsent_lock:
+                    self._unsent.add(ident)
                 logger.exception("kafka produce failed topic=%s key=%s", self._topic, key)
                 raise KafkaPublishError(
                     f"signal for {key} accepted locally but not published to Kafka"
                 ) from exc
+            with self._unsent_lock:
+                self._unsent.discard(ident)
+            outcome = PublishOutcome.ACCEPTED
             # Start tracking this bucket going forward (not blocking on it: the
             # local apply above already reflects this process's own write), so
             # a peer's later contribution to the same risk_id is picked up

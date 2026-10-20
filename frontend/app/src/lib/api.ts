@@ -32,6 +32,12 @@ export interface FlagResult {
   network: NetworkView;
 }
 
+/** What Bank B asserts when it flags; the server default is 92 at 0.94. */
+export interface FlagScore {
+  riskScore: number;
+  confidence: number;
+}
+
 export interface ForgeResult {
   signer: string;
   claimed_publisher: string;
@@ -126,15 +132,20 @@ const post = <T>(path: string, body?: unknown) =>
   request<T>(path, { method: "POST", body: body === undefined ? undefined : JSON.stringify(body) });
 
 export const api = {
-  health: () => request<{ status: string; investigator_id: string }>("/demo/health"),
+  health: () => request<{ status: string; investigator_id: string; bus_down: boolean }>("/demo/health"),
   reset: () => post<{ status: string }>("/demo/reset"),
+  outage: (down: boolean) => post<{ bus_down: boolean }>("/demo/outage", { down }),
   riskId: (receiver_ifsc: string, receiver_account: string) =>
     post<{ risk_id: string; network: NetworkView }>("/demo/risk-id", {
       receiver_ifsc,
       receiver_account,
     }),
-  flag: (receiver_ifsc: string, receiver_account: string) =>
-    post<FlagResult>("/demo/flag", { receiver_ifsc, receiver_account }),
+  flag: (receiver_ifsc: string, receiver_account: string, score?: FlagScore) =>
+    post<FlagResult>("/demo/flag", {
+      receiver_ifsc,
+      receiver_account,
+      ...(score ? { risk_score: score.riskScore, confidence: score.confidence } : {}),
+    }),
   forge: (receiver_ifsc: string, receiver_account: string) =>
     post<ForgeResult>("/demo/forge", { receiver_ifsc, receiver_account }),
   feed: () => request<{ decisions: FeedRow[] }>("/demo/feed"),

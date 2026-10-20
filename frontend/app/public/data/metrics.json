@@ -1,6 +1,6 @@
 {
- "generated_at": "2026-10-14T20:18:23+00:00",
- "commit": "cabdf63",
+ "generated_at": "2026-10-20T16:55:27+00:00",
+ "commit": "411f630",
  "datasets": {
   "ulb": {
    "label": "ULB credit-card fraud",
@@ -7975,42 +7975,42 @@
    {
     "noise_multiplier": 0.5,
     "epsilon": 364.58,
-    "global_auc": 0.6229
+    "global_auc": 0.6222
    },
    {
     "noise_multiplier": 1.0,
     "epsilon": 118.29,
-    "global_auc": 0.6231
+    "global_auc": 0.622
    },
    {
     "noise_multiplier": 2.0,
     "epsilon": 43.14,
-    "global_auc": 0.6231
+    "global_auc": 0.6217
    },
    {
     "noise_multiplier": 4.0,
     "epsilon": 17.57,
-    "global_auc": 0.6189
+    "global_auc": 0.6261
    },
    {
     "noise_multiplier": 8.0,
     "epsilon": 7.79,
-    "global_auc": 0.6167
+    "global_auc": 0.628
    },
    {
     "noise_multiplier": 15.0,
     "epsilon": 3.9,
-    "global_auc": 0.6163
+    "global_auc": 0.6081
    },
    {
     "noise_multiplier": 30.0,
     "epsilon": 1.88,
-    "global_auc": 0.605
+    "global_auc": 0.5705
    },
    {
     "noise_multiplier": 60.0,
     "epsilon": 0.92,
-    "global_auc": 0.5215
+    "global_auc": 0.5966
    }
   ]
  },
@@ -8029,25 +8029,25 @@
   "memory": {
    "publishers": 20,
    "signals": 4000,
-   "throughput_per_s": 3468.0,
+   "throughput_per_s": 21979.1,
    "lost_updates": 0,
    "lookup_p99_ms": 0.0
   },
   "kafka": {
    "publishers": 10,
    "signals": 500,
-   "throughput_per_s": 735.9,
+   "throughput_per_s": 865.5,
    "lost_updates": 0,
-   "lookup_p99_ms": 134.43
+   "lookup_p99_ms": 169.31
   }
  },
  "tests": {
   "command": "pytest",
-  "summary": "926 passed",
-  "passed": 926,
+  "summary": "939 passed",
+  "passed": 939,
   "failed": 0,
   "skipped": 0,
-  "duration_s": 89.4,
+  "duration_s": 88.0,
   "exit_code": 0
  },
  "checks": {

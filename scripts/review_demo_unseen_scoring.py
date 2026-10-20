@@ -8,6 +8,7 @@ Needs data/processed/m1_global_synthetic.npz to exist first:
 import numpy as np
 
 from aris.fl.scorer import FraudScorer, load_weights
+from aris.schema import LookupStatus, apply_policy
 
 weights, meta = load_weights("data/processed/m1_global_synthetic.npz")
 scorer = FraudScorer.from_weights(
@@ -43,19 +44,24 @@ cases = [
 ]
 
 col = max(len(label) for label, _ in cases) + 2
-print(f"{'case':<{col}} {'score':>6} {'conf':>6}  decision")
-print("-" * (col + 25))
+print(f"{'case':<{col}} {'score':>6} {'conf':>6}  decision (policy, if published)")
+print("-" * (col + 45))
+scores: dict[str, int] = {}
 for label, row in cases:
     result = scorer.score_row(row)
-    decision = (
-        "BLOCK" if result.risk_score >= 85 else "step-up" if result.risk_score >= 50 else "allow"
+    scores[label] = result.risk_score
+    # The real policy, as BankBot would apply it to this score on a Rs 5,000 transfer.
+    decision = apply_policy(
+        LookupStatus.FOUND, result.risk_score, 500_000, confidence=result.confidence
     )
-    print(f"{label:<{col}} {result.risk_score:>6} {result.confidence:>6.2f}  {decision}")
+    print(f"{label:<{col}} {result.risk_score:>6} {result.confidence:>6.2f}  {decision.value}")
 
+spiked = {label: s for label, s in scores.items() if "spiked" in label}
+real = [s for label, s in spiked.items() if "f6" not in label]
+f6 = next(s for label, s in spiked.items() if "f6" in label)
 print(
-    "\nf0 and f3 both trigger BLOCK: those are real bank-driven fraud signals"
-    "\nthe model saw during training (5 banks, driving features 0-4). f6 does"
-    "\nNOT trigger it despite the same spike magnitude -- feature 6 never drove"
-    "\nfraud for any of the 5 banks trained on, so the model correctly learned"
-    "\nit is irrelevant. This is not 'big number = fraud' -- it is specific."
+    f"\nSame spike, different features: the bank-driven features score {min(real)}-{max(real)};"
+    f"\nf6, which never drove fraud in training, scores {f6}. The model learned which"
+    "\nfeatures matter, not 'big number = fraud'. This is the synthetic model"
+    "\n(holdout AUC 0.655), so clean rows near 50 are expected."
 )

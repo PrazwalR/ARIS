@@ -83,6 +83,46 @@ test.describe("live demo", () => {
     expect(errors).toEqual([]);
   });
 
+  test("policy cases: every branch decided by BankBot matches the rule", async ({ page }) => {
+    const errors = trackErrors(page);
+    await page.goto("/live");
+    const panel = page.getByTestId("policy-cases");
+    await panel.getByRole("button", { name: "Run all cases" }).click();
+    await expect(panel.getByTestId("cases-summary")).toHaveText("10/10 match", { timeout: 20_000 });
+    await expect(panel.getByTestId("case-edge85-actual")).toContainText("Blocked");
+    await expect(panel.getByTestId("case-edge84-actual")).toContainText("Step-up");
+    await expect(panel.getByTestId("case-unsure-actual")).toContainText("Step-up");
+    await expect(panel.getByTestId("case-outage-actual")).toContainText("Step-up");
+    await expect(page.getByTestId("outage")).not.toBeChecked();
+    expect(errors).toEqual([]);
+  });
+
+  test("bus outage: a clean transfer that was allowed now fails closed", async ({ page }) => {
+    await page.goto("/live");
+    const sandbox = page.getByTestId("sandbox");
+    await sandbox.getByRole("button", { name: "Send transfer" }).click();
+    await expect(sandbox.getByTestId("console-result")).toContainText("Allow");
+    // The box reflects the server's answer, so it changes after the round trip.
+    await page.getByTestId("outage").click();
+    await expect(page.getByTestId("outage")).toBeChecked();
+    await expect(page.getByTestId("outage-banner")).toBeVisible();
+    await sandbox.getByRole("button", { name: "Send transfer" }).click();
+    await expect(sandbox.getByTestId("console-result")).toContainText("Step");
+    await page.getByTestId("outage").click();
+    await expect(page.getByTestId("outage-banner")).toHaveCount(0);
+  });
+
+  test("sandbox flag score: 70 asks for verification instead of blocking", async ({ page }) => {
+    await page.goto("/live");
+    const sandbox = page.getByTestId("sandbox");
+    await sandbox.getByLabel("Receiver account").fill("ACC-70");
+    await sandbox.getByLabel("Flag score (0–100)").fill("70");
+    await sandbox.getByRole("button", { name: "Flag as Bank B" }).click();
+    await expect(sandbox.getByTestId("console-result")).toContainText("score 70");
+    await sandbox.getByRole("button", { name: "Send transfer" }).click();
+    await expect(sandbox.getByTestId("console-result")).toContainText("Step");
+  });
+
   test("every real request is logged to the browser console", async ({ page }) => {
     const lines: string[] = [];
     page.on("console", (m) => m.type() === "info" && lines.push(m.text()));

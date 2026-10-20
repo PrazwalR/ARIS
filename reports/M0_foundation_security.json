@@ -1,9 +1,0 @@
-{
-  "hmac_sha256_hashes_per_second": 76849.74,
-  "ed25519_signs_per_second": 18132.41,
-  "ed25519_verifications_per_second": 7436.51,
-  "bankbot_pre_tx_decisions_per_second": 12244.02,
-  "bankbot_latency_ms": 0.0817,
-  "bus_admission_verified": true,
-  "tamper_evident_signatures_verified": true
-}

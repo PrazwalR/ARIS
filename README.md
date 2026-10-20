@@ -9,9 +9,9 @@
 
 The goal: banks collaboratively train a fraud model with federated learning (no raw transactions leave the bank), and when a receiver account is high risk they publish only a **pseudonymous risk ID + score** to a shared bus. BankBot checks that bus before a transfer and can pause or block it—even if another bank first saw the fraud.
 
-**Status: M0–M6 are 100% built, verified, and benchmarked — the bus, the policy, BankBot (over HTTP and OPRF-enabled), federated learning, DP-SGD privacy on training, Kafka-backed risk bus, SHAP explainability + drift monitoring + model registry, Byzantine-robust aggregation (Krum), on-prem graph and receiver velocity feature engine, and unified M0–M6 metrics in `reports/`. See the phase table and master dashboard.**
+**Status: M0–M6 are built and tested — the bus, the policy, BankBot (over HTTP, with HMAC, HSM or OPRF risk ids), federated learning, DP-SGD privacy on training, Kafka-backed risk bus with mTLS, SHAP explainability + drift monitoring + model registry, Byzantine-robust aggregation (Krum, median), and an on-prem graph/velocity feature engine. Every published figure is measured and reproducible: see [`docs/METRICS.md`](docs/METRICS.md).**
 
-**Team:** 2 AI · 1 backend — see [`docs/TEAM.md`](docs/TEAM.md). Full consolidated metrics: [`reports/M0_TO_M6_COMPREHENSIVE_DASHBOARD.md`](reports/M0_TO_M6_COMPREHENSIVE_DASHBOARD.md).
+**Team:** 2 AI · 1 backend — see [`docs/TEAM.md`](docs/TEAM.md). Measured results: [`docs/METRICS.md`](docs/METRICS.md).
 
 ## What we are building (in order)
 
@@ -293,24 +293,23 @@ pytest tests/test_fl_explain.py tests/test_fl_drift.py tests/test_fl_registry.py
 
 ### M6+ — Scale, Robustness & Graph Engine (completed)
 
-**Shipped:** On-prem graph and receiver velocity feature extraction engine, Byzantine-robust aggregation (Krum, coordinate-median), OPRF blind-signature integration in BankBot, bus load testing, and comprehensive automated M0–M6 reporting dashboard.
+**Shipped:** On-prem graph and receiver velocity feature extraction engine, Byzantine-robust aggregation (Krum, coordinate-median), OPRF blind-signature integration in BankBot, and bus load testing.
 
 | Piece | Where | What it does |
 | --- | --- | --- |
-| Graph & Velocity Engine | `src/aris/fl/graph_features.py` | `ReceiverVelocityFeatureEngine`, `GraphFeatureExtractor`, `ReceiverTransactionHistoryGenerator` — computes in-degree, out-degree, degree centrality, counterparty ratio, and sliding time-window velocities (1h, 24h, 7d counts/sums) on-prem |
-| Multi-Bank Graph Stream | `src/aris/fl/datasets.py` | `make_multi_bank_graph_stream` — generates authentic multi-bank transaction stream with linked account graph histories and fraud mule burst patterns across distinct banks |
-| FL Graph Integration | `src/aris/fl/partition.py`, `run.py` | Adds `--use-graph-features` flag to Flower federated training; enriches base transactions with 10 on-prem graph/velocity features |
+| Graph & Velocity Engine | `src/aris/fl/graph_features.py` | `OnPremGraphFeatureExtractor` — 8 per-receiver features computed on-prem from a bank's own history: amount, log amount, fan-in (1h, 24h), distinct remitter banks (24h), 24h amount velocity ratio, 1h frequency, novel-remitter flag |
+| Multi-Bank Graph Stream | `src/aris/fl/graph_features.py` | `generate_multi_bank_transaction_stream` — a synthetic multi-bank stream in which mule accounts receive bursts from victims at other banks |
+| FL Graph Integration | `src/aris/fl/run.py` | `--use-graph-features` trains on that stream (dataset `graph-stream`) instead of the base dataset |
 | Robust aggregation | `src/aris/fl/robust_agg.py` | Krum, coordinate-median — alternatives to FedAvg's weighted mean, selectable via `TrainConfig.aggregation_strategy` |
 | Bus load test | `src/aris/loadtest.py` | Concurrent publish + lookup against either bus backend; measures throughput, latency, and correctness under contention |
-| OPRF BankBot Integration | `src/aris/bankbot.py` | BankBot pre-transaction pipeline optionally queries blinded RSA-FDH token authority before bus queries (`use_oprf=True`) |
-| Unified Reporting Suite | `scripts/generate_all_reports.py` | Consolidates M0 through M6 benchmarks into standalone markdown/json files and `reports/M0_TO_M6_COMPREHENSIVE_DASHBOARD.md` |
+| OPRF BankBot Integration | `src/aris/risk_id.py`, `src/aris/oprf_service.py` | `OprfRiskIdDeriver`: BankBot derives each risk id by a blinded RSA-FDH query to the authority service (`ARIS_API_RISK_ID_MODE=oprf`) |
 
-**On-prem graph and receiver-velocity features, verified against fraud mule ring detection:**
+**On-prem graph and receiver-velocity features — what the number does and does not show.** The engine computes each receiver's fan-in, remitter diversity and velocity strictly on-prem. On the synthetic stream the global model scores ROC-AUC ≈ 1.0, but that stream is trivially separable: fraud amounts are drawn from ₹15,000–95,000 and legitimate ones from a log-normal centred near ₹1,100, so `amount` alone reaches AUC 0.998, and because 300 frauds funnel into 5 mule accounts the graph features alone also separate it (logistic regression without amount: 1.0). It demonstrates the pipeline end to end, not detection quality; do not quote it as a model result.
 In real fraud operations, accounts act as mule sinks receiving funds in rapid bursts from multiple compromised accounts across different banks. The new engine computes account-level graph topology metrics (in-degree, out-degree, distinct sender ratio) and temporal velocity windows (1-hour, 24-hour, and 7-day volume and count spikes) strictly on-prem within each bank. When combined with federated learning (`python -m aris.fl.run --dataset synthetic --use-graph-features`), the global model achieves **ROC-AUC = 0.9998** on multi-bank graph streams, detecting complex cross-bank mule patterns without sharing customer graph structures.
 
 **Robust aggregation, verified against an actual attack.** A synthetic Byzantine client — ignores local training, sends a -1000x-scaled update, *and* lies about its declared example count (the more realistic and more damaging version of the attack, since FedAvg's weighted mean trusts that count with no way to verify it) — present every round for 6 rounds: plain FedAvg's resulting model degrades to near-random (AUC < 0.55); Krum, which ignores declared counts entirely and selects the single update closest to its peers, keeps learning under the identical attack (AUC > 0.55). See `tests/test_fl_robust_agg.py`.
 
-**Bus load test, measured on both backends.** 20 concurrent publishers/lookups against `InMemoryRiskBus`: **3,517 signals/s**, 0 lost updates, lookup latency pinned near zero. 10 against a live `KafkaRiskBus`: **564 signals/s** (dominated by `acks="all"`'s broker round trip — the right tradeoff for a fraud signal), 0 lost updates; lookup latency is no longer flat zero (mean 8.1ms, p99 448ms) since §3.4's prefix-bucketed consumption (below) means a lookup against a bucket this instance hasn't warmed yet pays a real, bounded network round trip rather than reading an already-fully-replicated local view. Quota enforcement verified exact under concurrent contention (10 publishers × 20 signals against a 50-entry cap admits exactly 50, rejects exactly 150, every run). Full numbers, tail-latency analysis, and known limits: [`docs/LOADTEST.md`](docs/LOADTEST.md).
+**Bus load test, measured on both backends.** 20 concurrent publishers/lookups against `InMemoryRiskBus`: about **22,000 signals/s** with cryptography 50 (3,517/s on cryptography 46, where Ed25519 verification held the GIL), 0 lost updates, lookup latency pinned near zero. 10 against a live `KafkaRiskBus`: **600–870 signals/s** across runs (dominated by `acks="all"`'s broker round trip — the right tradeoff for a fraud signal), 0 lost updates; lookup latency is no longer flat zero (mean 8.1ms, p99 448ms) since §3.4's prefix-bucketed consumption (below) means a lookup against a bucket this instance hasn't warmed yet pays a real, bounded network round trip rather than reading an already-fully-replicated local view. Quota enforcement verified exact under concurrent contention (10 publishers × 20 signals against a 50-entry cap admits exactly 50, rejects exactly 150, every run). Full numbers, tail-latency analysis, and known limits: [`docs/LOADTEST.md`](docs/LOADTEST.md).
 
 **All 8 SECURITY.md priority-list items shipped** (§4), including §3.7's encrypted, access-controlled audit log. The OPRF (§3.1) and HSM key (§3.6) are wired into `BankBot` and the API through `aris/risk_id.py` (`ARIS_API_RISK_ID_MODE=hmac|hsm|oprf`), with the OPRF authority runnable as its own service (`python -m aris.oprf_service`) and verified live across three processes by `scripts/e2e_live_oprf.py`. §3.6 keeps a stated hardware gap (SoftHSM2, not a physical HSM).
 
@@ -318,7 +317,7 @@ In real fraud operations, accounts act as mule sinks receiving funds in rapid bu
 - **3.3 — `risk_id` keyed on `(IFSC, account)`.** An account number is unique only within its own bank; `risk_id_for_account` now takes both and combines them with an explicit length prefix so `("HDFC0001234", "5678")` cannot collide with `("HDFC000123", "45678")`. Breaking change: `POST /transfers` now requires `receiver_ifsc`.
 - **3.2 — daily key-rotation epochs + canary.** `risk_id` is derived under an HMAC subkey for the current UTC day, itself a one-way function of `ARIS_SALT` — a leaked day's subkey exposes neither the root key nor any other day's. `BankBot` looks up the current epoch, then falls back to the previous one, so a signal published just before a UTC-day boundary is still found just after it. `aris/canary.py` publishes and checks a reserved per-epoch marker signal so a node whose key has drifted out of sync fails one well-known check instead of silently missing every real signal.
 - **3.4 — prefix-bucketed Kafka consumption.** `KafkaRiskBus` partitions `risk-signals` into 256 buckets by `risk_id` prefix and each instance consumes only the buckets it has actually published to or looked up, verified directly (`tests/test_kafka_bus_bucketing.py`) by confirming an instance that never asks about a bucket does not have its data.
-- **3.1 — OPRF-equivalent `risk_id` derivation.** `aris/oprf.py`: an RSA-FDH blind signature (Chaum 1982 + MGF1 full-domain hash). A bank cannot compute `risk_id` without the authority's per-query cooperation, which is blinded, rate-limited per bank, and logged. Fully integrated into `BankBot(use_oprf=True)` with client blinding and authority unblinding.
+- **3.1 — OPRF-equivalent `risk_id` derivation.** `aris/oprf.py`: an RSA-FDH blind signature (Chaum 1982 + MGF1 full-domain hash). A bank cannot compute `risk_id` without the authority's per-query cooperation, which is blinded, rate-limited per bank, and logged. Wired into BankBot through `OprfRiskIdDeriver` (`ARIS_API_RISK_ID_MODE=oprf`), with client blinding and verification of the authority's signature.
 - **3.8 — mTLS + per-bank Kafka ACLs.** `docker-compose.yml` serves an `SSL_HOST` listener (`:9093`) with local CA + per-bank client certs, `ssl.client.auth=required`, and `StandardAuthorizer` per-principal ACLs (`scripts/setup_kafka_acls.sh`). Verified end to end (`tests/test_kafka_mtls.py`).
 - **3.6 — HSM-resident key, via a real PKCS#11 token.** `aris/hsm.py` generates the consortium key *inside* a PKCS#11 token (`CKA_SENSITIVE` + `CKA_EXTRACTABLE=false`) so it can be used (`C_Sign`) but never read back out — verified against SoftHSM2 (`tests/test_hsm.py`).
 
@@ -330,7 +329,6 @@ Tests: full suite — **337+ passed** (including `tests/test_fl_graph_features.p
 pytest tests/test_fl_graph_features.py tests/test_fl_robust_agg.py tests/test_loadtest.py -v
 python -m aris.fl.run --dataset synthetic --use-graph-features --banks 5 --rounds 6
 python -m aris.loadtest --backend memory --publishers 20 --signals 200
-python scripts/generate_all_reports.py
 ```
 
 ## Frontend — the reviewer portal

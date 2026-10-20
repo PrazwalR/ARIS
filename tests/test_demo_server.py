@@ -85,6 +85,56 @@ class TestHeroStory:
         assert _transfer(client)["decision"] == "allow"
 
 
+class TestPolicyCases:
+    """Every branch the Live page's policy table runs, decided by BankBot."""
+
+    @pytest.mark.parametrize(
+        ("score", "confidence", "amount", "expected"),
+        [
+            (None, None, 250_000, "allow"),
+            (None, None, 15_000_000, "step_up"),
+            (92, 0.94, 500_000, "block"),
+            (85, 0.9, 500_000, "block"),
+            (84, 0.9, 500_000, "step_up"),
+            (70, 0.9, 500_000, "step_up"),
+            (40, 0.9, 500_000, "allow"),
+            (92, 0.3, 500_000, "step_up"),
+        ],
+    )
+    def test_decision_follows_the_policy(self, client, score, confidence, amount, expected):
+        if score is not None:
+            flag = client.post(
+                "/demo/flag",
+                json={**ACCOUNT_BODY, "risk_score": score, "confidence": confidence},
+            )
+            assert flag.json()["outcome"] == "accepted"
+        assert _transfer(client, amount_minor=amount)["decision"] == expected
+
+    def test_outage_fails_closed_even_for_a_clean_account(self, client):
+        assert _transfer(client)["decision"] == "allow"
+        assert client.post("/demo/outage", json={"down": True}).json() == {"bus_down": True}
+        assert client.get("/demo/health").json()["bus_down"] is True
+        assert _transfer(client)["decision"] == "step_up"
+        client.post("/demo/outage", json={"down": False})
+        assert _transfer(client)["decision"] == "allow"
+
+    def test_outage_does_not_erase_what_the_bus_holds(self, client):
+        client.post("/demo/flag", json=ACCOUNT_BODY)
+        client.post("/demo/outage", json={"down": True})
+        view = client.post("/demo/risk-id", json=ACCOUNT_BODY).json()["network"]
+        assert view["score"] == 92
+        client.post("/demo/outage", json={"down": False})
+        assert _transfer(client)["decision"] == "block"
+
+    def test_reset_restores_the_bus(self, client):
+        client.post("/demo/outage", json={"down": True})
+        client.post("/demo/reset")
+        assert client.get("/demo/health").json()["bus_down"] is False
+
+    def test_outage_switch_rejects_non_boolean(self, client):
+        assert client.post("/demo/outage", json={"down": "yes"}).status_code == 422
+
+
 class TestPrivacy:
     def test_feed_never_carries_an_account_number(self, client):
         client.post("/demo/flag", json=ACCOUNT_BODY)

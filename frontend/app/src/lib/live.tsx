@@ -14,12 +14,14 @@ export function LiveProvider({ children }: { children: ReactNode }) {
   const pending = useRef(new Set<string>());
   const [feedVersion, setFeedVersion] = useState(0);
   const [lastAuditRef, setLastAuditRef] = useState<string | null>(null);
+  const [busDown, setBusDownState] = useState(false);
 
   const probe = useCallback(() => {
     api
       .health()
       .then((h) => {
         setInvestigatorId(h.investigator_id);
+        setBusDownState(h.bus_down);
         setStatus("online");
       })
       .catch(() => setStatus("offline"));
@@ -51,6 +53,10 @@ export function LiveProvider({ children }: { children: ReactNode }) {
   );
 
   const bumpFeed = useCallback(() => setFeedVersion((v) => v + 1), []);
+  const setBusDown = useCallback(async (down: boolean) => {
+    const r = await api.outage(down);
+    setBusDownState(r.bus_down);
+  }, []);
 
   const value = useMemo(
     () => ({
@@ -64,8 +70,10 @@ export function LiveProvider({ children }: { children: ReactNode }) {
       bumpFeed,
       lastAuditRef,
       setLastAuditRef,
+      busDown,
+      setBusDown,
     }),
-    [status, investigatorId, recheck, lens, riskIdFor, feedVersion, bumpFeed, lastAuditRef],
+    [status, investigatorId, recheck, lens, riskIdFor, feedVersion, bumpFeed, lastAuditRef, busDown, setBusDown],
   );
   return <LiveContext.Provider value={value}>{children}</LiveContext.Provider>;
 }

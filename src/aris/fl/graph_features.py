@@ -165,7 +165,8 @@ def generate_multi_bank_transaction_stream(
     (records, feature_matrix, labels, feature_names)
     """
     rng = np.random.default_rng(seed)
-    bank_ifscs = [f"BANK{chr(65 + i)}0001234" for i in range(num_banks)]
+    # Valid 11-character IFSCs (4 letters, "0", 6 characters): BankBot rejects anything else.
+    bank_ifscs = [f"BNK{chr(65 + i)}0001234" for i in range(num_banks)]
 
     # Pool of legitimate users per bank
     users_per_bank = 100

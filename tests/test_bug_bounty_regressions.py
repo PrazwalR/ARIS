@@ -393,3 +393,60 @@ class TestKafkaTopicCannotBeCompacted:
         finally:
             admin.delete_topics([topic])
             admin.close()
+
+
+class TestKafkaPublishRetry:
+    """A signal applied locally whose Kafka send failed used to read as STALE
+    on retry and was never sent again, so peers never saw the flag."""
+
+    def test_a_retry_after_a_failed_send_reaches_kafka(self):
+        from kafka.errors import KafkaTimeoutError
+
+        from aris.attestation import Publisher, PublisherKeyring
+        from aris.bus import InMemoryRiskBus, PublishOutcome
+        from aris.kafka_bus import KafkaPublishError, KafkaRiskBus
+        from aris.schema import NEW_BENEFICIARY, RiskSignal
+
+        sends: list[str] = []
+
+        class _Future:
+            def __init__(self, fail: bool) -> None:
+                self._fail = fail
+
+            def get(self, timeout: float) -> None:
+                if self._fail:
+                    raise KafkaTimeoutError("broker unreachable")
+
+        class _Producer:
+            def send(self, topic, key, value, partition):
+                sends.append(key)
+                return _Future(fail=len(sends) == 1)
+
+        keyring = PublisherKeyring()
+        bank = Publisher.generate("BANK-B")
+        keyring.register(bank.bank_id, bank.public_key)
+        bus = object.__new__(KafkaRiskBus)
+        bus._topic = "risk-signals"
+        bus._local = InMemoryRiskBus(keyring)
+        bus._unsent = set()
+        bus._unsent_lock = threading.Lock()
+        bus._producer = _Producer()
+        bus._want_bucket = lambda _bucket: None
+
+        signed = bank.sign(
+            RiskSignal(
+                risk_id="ab" * 32,
+                risk_score=92,
+                confidence=0.9,
+                reason_codes=(NEW_BENEFICIARY,),
+                model_version="t",
+                source_bank_id="BANK-B",
+            )
+        )
+        with pytest.raises(KafkaPublishError):
+            bus.publish(signed)
+        assert bus.publish(signed) is PublishOutcome.ACCEPTED
+        assert len(sends) == 2
+        # Once delivered, a further identical publish is a plain duplicate.
+        assert bus.publish(signed) is not PublishOutcome.ACCEPTED
+        assert len(sends) == 2

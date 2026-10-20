@@ -15,7 +15,7 @@ license = { file = "LICENSE" }
 # milestones that actually use them, as extras below.
 dependencies = [
     "pydantic>=2.7",      # schema validation on the shared contract
-    "cryptography>=42.0", # Ed25519 publisher attestation
+    "cryptography>=48.0.1", # Ed25519 attestation; >=48.0.1 for GHSA-537c-gmf6-5ccf
 ]
 
 [project.optional-dependencies]
@@ -81,7 +81,6 @@ select = ["E", "F", "W", "B", "SIM", "UP", "ARG", "RET", "C4", "PIE", "RUF"]
 "tests/*" = ["ARG002", "ARG001"]
 # Report templates: long lines are markdown table rows and prose inside the
 # generated report bodies -- a markdown table row cannot be line-wrapped.
-"scripts/generate_all_reports.py" = ["E501"]
 
 [tool.mypy]
 # Higher than requires-python's 3.10 floor: numpy's bundled stubs use PEP 695

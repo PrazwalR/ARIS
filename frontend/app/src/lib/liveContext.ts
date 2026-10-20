@@ -16,6 +16,10 @@ export interface LiveState {
   bumpFeed: () => void;
   lastAuditRef: string | null;
   setLastAuditRef: (ref: string) => void;
+  /** Fault injection on the showcase bus: while set, every lookup answers
+   * "unavailable" and BankBot must fail closed. */
+  busDown: boolean;
+  setBusDown: (down: boolean) => Promise<void>;
 }
 
 export const LiveContext = createContext<LiveState | null>(null);
